@@ -34,6 +34,8 @@ const List<Color> kAccentPalette = [
 const List<String> kAccentNames = ['Pure Ice', 'Crimson', 'Purple', 'Emerald', 'Gold', 'Cyan'];
 const List<String> kFontNames = ['Modern Sans', 'Street Bold', 'Studio Mono'];
 const List<String?> kFontFamilies = [null, 'sans-serif-condensed', 'monospace'];
+const List<String> kMoodTags = ['Gym', 'Late Night', 'Chill', 'Hype'];
+const List<String> kGlowNames = ['Subtle', 'Medium', 'Max Neon'];
 
 const Map<String, List<double>> kEqPresets = {
   'Flat': [0.0, 0.0, 0.0, 0.0, 0.0],
@@ -54,6 +56,7 @@ class Song {
     this.favorite = false,
     this.playCount = 0,
     this.durationMs = 0,
+    this.mood = '',
   });
 
   final String id;
@@ -65,6 +68,7 @@ class Song {
   final bool favorite;
   final int playCount;
   final int durationMs;
+  final String mood;
 
   Song copyWith({
     String? title,
@@ -74,6 +78,7 @@ class Song {
     bool? favorite,
     int? playCount,
     int? durationMs,
+    String? mood,
   }) =>
       Song(
         id: id,
@@ -85,6 +90,7 @@ class Song {
         favorite: favorite ?? this.favorite,
         playCount: playCount ?? this.playCount,
         durationMs: durationMs ?? this.durationMs,
+        mood: mood ?? this.mood,
       );
 
   Map<String, dynamic> toJson() => {
@@ -97,6 +103,7 @@ class Song {
         'favorite': favorite,
         'playCount': playCount,
         'durationMs': durationMs,
+        'mood': mood,
       };
 
   factory Song.fromJson(Map<String, dynamic> j) => Song(
@@ -109,6 +116,7 @@ class Song {
         favorite: j['favorite'] ?? false,
         playCount: j['playCount'] ?? 0,
         durationMs: j['durationMs'] ?? 0,
+        mood: j['mood'] ?? '',
       );
 }
 
@@ -285,6 +293,9 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  static const EventChannel _noisyChannel = EventChannel('typeshi/noisy');
+  static const EventChannel _shakeChannel = EventChannel('typeshi/shake');
+
   final AndroidEqualizer _eq = AndroidEqualizer();
   late final AudioPlayer _player = AudioPlayer(
     audioPipeline: AudioPipeline(androidAudioEffects: [_eq]),
@@ -297,9 +308,14 @@ class _HomeScreenState extends State<HomeScreen> {
   int _tab = 0;
   int _filterTab = 0;
   int _browseMode = 0;
+  String _selectedMood = '';
   bool _enableBrowseTabs = false;
   bool _dynamicCoverColor = true;
   bool _showMiniLyric = true;
+  bool _autoPauseNoisy = true;
+  bool _shakeToSkip = false;
+  bool _volumeNormalizer = false;
+  int _glowLevel = 1;
   bool _slowedReverb = false;
   bool _sortAZ = false;
   int _crossfadeSec = 0;
@@ -313,12 +329,16 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _shuffle = false;
   LoopMode _loop = LoopMode.off;
   double _speed = 1.0;
+  double _pitch = 1.0;
   Duration _pos = Duration.zero;
   Duration _dur = Duration.zero;
   Duration? _loopA;
   Duration? _loopB;
   Timer? _sleepTimer;
+  Timer? _sleepFadeTimer;
   Timer? _statTimer;
+  StreamSubscription? _noisySub;
+  StreamSubscription? _shakeSub;
   int? _sleepMinutes;
   bool _crossfading = false;
   List<LyricLine> _miniLyrics = [];
@@ -326,6 +346,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Song? get _current => (_index >= 0 && _index < _queue.length) ? _queue[_index] : null;
   bool get _selecting => _selectedIds.isNotEmpty;
+  double get _glowScale => _glowLevel == 0 ? 0.35 : (_glowLevel == 2 ? 1.85 : 1.0);
 
   @override
   void initState() {
@@ -334,10 +355,32 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _initStorageAndStreams() async {
+    _noisySub = _noisyChannel.receiveBroadcastStream().listen((_) {
+      if (_autoPauseNoisy && _playing) _player.pause();
+    });
+    _shakeSub = _shakeChannel.receiveBroadcastStream().listen((_) {
+      if (_shakeToSkip && _songs.isNotEmpty) {
+        HapticFeedback.mediumImpact();
+        if (_queue.isEmpty) {
+          _playFromQueue(_songs, 0, shuffleStart: true);
+        } else {
+          final prevShuffle = _shuffle;
+          _shuffle = true;
+          _next().then((_) => _shuffle = prevShuffle);
+        }
+      }
+    });
+
     _statTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       if (_playing) {
         _totalSecondsListened += 5;
-        SharedPreferences.getInstance().then((p) => p.setInt('totalSec', _totalSecondsListened));
+        SharedPreferences.getInstance().then((p) {
+          p.setInt('totalSec', _totalSecondsListened);
+          if (_current != null) {
+            p.setString('lastSongId', _current!.id);
+            p.setInt('lastPosMs', _pos.inMilliseconds);
+          }
+        });
       }
     });
 
@@ -347,11 +390,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (_loopA != null && _loopB != null && _loopB! > _loopA! && p >= _loopB!) {
         _player.seek(_loopA!);
       }
-      if (_crossfadeSec > 0 &&
-          !_crossfading &&
-          _dur.inSeconds > _crossfadeSec + 2 &&
-          (_dur - p).inMilliseconds <= _crossfadeSec * 1000 &&
-          (_dur - p).inMilliseconds > 200) {
+      if (_crossfadeSec > 0 && !_crossfading && _dur.inSeconds > _crossfadeSec + 2 && (_dur - p).inMilliseconds <= _crossfadeSec * 1000 && (_dur - p).inMilliseconds > 200) {
         _triggerCrossfade();
       }
     });
@@ -380,9 +419,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final rawSongs = prefs.getString('songs');
     if (rawSongs != null && rawSongs.isNotEmpty) {
       final list = jsonDecode(rawSongs) as List;
-      _songs.addAll(
-        list.map((e) => Song.fromJson(Map<String, dynamic>.from(e))).where((s) => File(s.path).existsSync()),
-      );
+      _songs.addAll(list.map((e) => Song.fromJson(Map<String, dynamic>.from(e))).where((s) => File(s.path).existsSync()));
     }
     final rawPl = prefs.getString('playlists');
     if (rawPl != null && rawPl.isNotEmpty) {
@@ -397,6 +434,10 @@ class _HomeScreenState extends State<HomeScreen> {
     _enableBrowseTabs = prefs.getBool('enableBrowseTabs') ?? false;
     _dynamicCoverColor = prefs.getBool('dynamicCoverColor') ?? true;
     _showMiniLyric = prefs.getBool('showMiniLyric') ?? true;
+    _autoPauseNoisy = prefs.getBool('autoPauseNoisy') ?? true;
+    _shakeToSkip = prefs.getBool('shakeToSkip') ?? false;
+    _volumeNormalizer = prefs.getBool('volumeNormalizer') ?? false;
+    _glowLevel = prefs.getInt('glowLevel') ?? 1;
     _crossfadeSec = prefs.getInt('crossfadeSec') ?? 0;
     _totalSecondsListened = prefs.getInt('totalSec') ?? 0;
     _eqPreset = prefs.getString('eqPreset') ?? 'Flat';
@@ -405,6 +446,21 @@ class _HomeScreenState extends State<HomeScreen> {
       _eqGains = (jsonDecode(rawGains) as List).map((e) => (e as num).toDouble()).toList();
     }
     await _applyEq();
+
+    final lastId = prefs.getString('lastSongId');
+    final lastPosMs = prefs.getInt('lastPosMs') ?? 0;
+    if (lastId != null && _songs.isNotEmpty) {
+      final foundIdx = _songs.indexWhere((s) => s.id == lastId);
+      if (foundIdx >= 0) {
+        _queue = List<Song>.from(_songs);
+        _index = foundIdx;
+        _pos = Duration(milliseconds: lastPosMs);
+        await _extractCoverColor(_songs[foundIdx]);
+        await _loadMiniLyrics(_songs[foundIdx]);
+        await _player.setFilePath(_songs[foundIdx].path);
+        if (lastPosMs > 0) await _player.seek(Duration(milliseconds: lastPosMs));
+      }
+    }
     if (mounted) setState(() {});
   }
 
@@ -427,6 +483,10 @@ class _HomeScreenState extends State<HomeScreen> {
     await prefs.setBool('enableBrowseTabs', _enableBrowseTabs);
     await prefs.setBool('dynamicCoverColor', _dynamicCoverColor);
     await prefs.setBool('showMiniLyric', _showMiniLyric);
+    await prefs.setBool('autoPauseNoisy', _autoPauseNoisy);
+    await prefs.setBool('shakeToSkip', _shakeToSkip);
+    await prefs.setBool('volumeNormalizer', _volumeNormalizer);
+    await prefs.setInt('glowLevel', _glowLevel);
     await prefs.setInt('crossfadeSec', _crossfadeSec);
     await prefs.setString('eqPreset', _eqPreset);
     await prefs.setString('eqGains', jsonEncode(_eqGains));
@@ -547,6 +607,37 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _setSongMood(Song s) async {
+    final picked = await showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        backgroundColor: const Color(0xFF16161C),
+        title: const Text('Select Vibe / Mood Tag'),
+        children: [
+          ...kMoodTags.map((m) => SimpleDialogOption(
+                onPressed: () => Navigator.pop(ctx, m),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Text(m, style: TextStyle(fontWeight: FontWeight.w800, color: s.mood == m ? widget.accent : Colors.white)),
+                ),
+              )),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, ''),
+            child: const Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Text('Clear Tag', style: TextStyle(color: Colors.white54))),
+          ),
+        ],
+      ),
+    );
+    if (picked == null) return;
+    final updated = s.copyWith(mood: picked);
+    final idx = _songs.indexWhere((e) => e.id == s.id);
+    if (idx >= 0) _songs[idx] = updated;
+    final qIdx = _queue.indexWhere((e) => e.id == s.id);
+    if (qIdx >= 0) _queue[qIdx] = updated;
+    await _saveData();
+    if (mounted) setState(() {});
+  }
+
   Future<void> _extractCoverColor(Song s) async {
     if (!_dynamicCoverColor || s.artPath == null || !File(s.artPath!).existsSync()) {
       widget.onDynamicAccent(null);
@@ -630,18 +721,19 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _triggerCrossfade() async {
     if (_queue.length <= 1) return;
     _crossfading = true;
+    final targetVol = _volumeNormalizer ? 0.85 : 1.0;
     try {
       for (int i = 4; i >= 1; i--) {
-        await _player.setVolume(i / 5.0);
+        await _player.setVolume(targetVol * (i / 5.0));
         await Future.delayed(Duration(milliseconds: (_crossfadeSec * 150).clamp(150, 600)));
       }
       await _next();
       for (int i = 1; i <= 5; i++) {
-        await _player.setVolume(i / 5.0);
+        await _player.setVolume(targetVol * (i / 5.0));
         await Future.delayed(Duration(milliseconds: (_crossfadeSec * 150).clamp(150, 600)));
       }
     } finally {
-      await _player.setVolume(1.0);
+      await _player.setVolume(targetVol);
       _crossfading = false;
     }
   }
@@ -670,9 +762,10 @@ class _HomeScreenState extends State<HomeScreen> {
     await _saveData();
     await _extractCoverColor(bumped);
     await _loadMiniLyrics(bumped);
-    await _player.setVolume(1.0);
+    await _player.setVolume(_volumeNormalizer ? 0.85 : 1.0);
     await _player.setFilePath(_queue[_index].path);
     await _player.setSpeed(_slowedReverb ? 0.85 : _speed);
+    await _player.setPitch(_slowedReverb ? 0.88 : _pitch);
     await _player.play();
   }
 
@@ -710,6 +803,34 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_dur.inMilliseconds <= 0) return;
     final nextMs = (_pos.inMilliseconds + seconds * 1000).clamp(0, _dur.inMilliseconds);
     await _player.seek(Duration(milliseconds: nextMs));
+  }
+
+  void _startFadeOutSleepTimer(int? mins) {
+    _sleepTimer?.cancel();
+    _sleepFadeTimer?.cancel();
+    setState(() => _sleepMinutes = mins);
+    if (mins == null) {
+      _player.setVolume(_volumeNormalizer ? 0.85 : 1.0);
+      return;
+    }
+    final fadeDelay = Duration(seconds: (mins * 60 - 15).clamp(1, 36000));
+    _sleepFadeTimer = Timer(fadeDelay, () {
+      int step = 15;
+      final startVol = _volumeNormalizer ? 0.85 : 1.0;
+      Timer.periodic(const Duration(seconds: 1), (t) {
+        step--;
+        if (step <= 0 || _sleepMinutes == null) {
+          t.cancel();
+        } else {
+          _player.setVolume(startVol * (step / 15.0));
+        }
+      });
+    });
+    _sleepTimer = Timer(Duration(minutes: mins), () async {
+      await _player.pause();
+      await _player.setVolume(_volumeNormalizer ? 0.85 : 1.0);
+      if (mounted) setState(() => _sleepMinutes = null);
+    });
   }
 
   Future<String?> _promptText(String title, {String initial = ''}) async {
@@ -769,7 +890,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) setState(() {});
   }
 
-    Future<void> _batchFavorite() async {
+  Future<void> _batchFavorite() async {
     for (int i = 0; i < _songs.length; i++) {
       if (_selectedIds.contains(_songs[i].id)) _songs[i] = _songs[i].copyWith(favorite: true);
     }
@@ -865,7 +986,13 @@ class _HomeScreenState extends State<HomeScreen> {
               children: [
                 Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(4))),
                 const SizedBox(height: 14),
-                Row(children: [Text('5-BAND EQUALIZER', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.5, color: widget.accent)), const Spacer(), Text(_eqPreset, style: const TextStyle(fontSize: 12, color: Colors.white60))]),
+                Row(
+                  children: [
+                    Text('5-BAND EQUALIZER', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.5, color: widget.accent)),
+                    const Spacer(),
+                    Text(_eqPreset, style: const TextStyle(fontSize: 12, color: Colors.white60)),
+                  ],
+                ),
                 const SizedBox(height: 12),
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
@@ -876,7 +1003,13 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: ChoiceChip(
                           label: Text(name),
                           selected: _eqPreset == name,
-                          onSelected: (_) async { _eqPreset = name; _eqGains = List<double>.from(kEqPresets[name]!); await _applyEq(); setState(() {}); setSheetState(() {}); },
+                          onSelected: (_) async {
+                            _eqPreset = name;
+                            _eqGains = List<double>.from(kEqPresets[name]!);
+                            await _applyEq();
+                            setState(() {});
+                            setSheetState(() {});
+                          },
                         ),
                       );
                     }).toList(),
@@ -889,7 +1022,24 @@ class _HomeScreenState extends State<HomeScreen> {
                     return Column(
                       children: [
                         Text('${_eqGains[i].toStringAsFixed(1)}dB', style: const TextStyle(fontSize: 10, color: Colors.white60)),
-                        SizedBox(height: 130, child: RotatedBox(quarterTurns: 3, child: Slider(min: -10, max: 10, value: _eqGains[i].clamp(-10.0, 10.0), onChanged: (v) async { _eqPreset = 'Custom'; _eqGains[i] = v; await _applyEq(); setState(() {}); setSheetState(() {}); }))),
+                        SizedBox(
+                          height: 130,
+                          child: RotatedBox(
+                            quarterTurns: 3,
+                            child: Slider(
+                              min: -10,
+                              max: 10,
+                              value: _eqGains[i].clamp(-10.0, 10.0),
+                              onChanged: (v) async {
+                                _eqPreset = 'Custom';
+                                _eqGains[i] = v;
+                                await _applyEq();
+                                setState(() {});
+                                setSheetState(() {});
+                              },
+                            ),
+                          ),
+                        ),
                         Text(bands[i], style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
                       ],
                     );
@@ -904,23 +1054,17 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openMostPlayedAndWrappedSheet() {
-    final topPlayed = _songs.where((s) => s.playCount > 0).toList()
-      ..sort((a, b) => b.playCount.compareTo(a.playCount));
+    final topPlayed = _songs.where((s) => s.playCount > 0).toList()..sort((a, b) => b.playCount.compareTo(a.playCount));
     final totalPlays = _songs.fold<int>(0, (sum, s) => sum + s.playCount);
     final minsListened = (_totalSecondsListened / 60).round();
     final artistCounts = <String, int>{};
     for (final s in _songs) {
-      if (s.playCount > 0) {
-        artistCounts[s.artist] = (artistCounts[s.artist] ?? 0) + s.playCount;
-      }
+      if (s.playCount > 0) artistCounts[s.artist] = (artistCounts[s.artist] ?? 0) + s.playCount;
     }
     String topArtist = 'None yet';
     int bestArtistPlays = 0;
     artistCounts.forEach((k, v) {
-      if (v > bestArtistPlays) {
-        bestArtistPlays = v;
-        topArtist = k;
-      }
+      if (v > bestArtistPlays) { bestArtistPlays = v; topArtist = k; }
     });
 
     showModalBottomSheet(
@@ -1010,6 +1154,7 @@ class _HomeScreenState extends State<HomeScreen> {
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => NowPlayingSheet(
         accent: widget.accent,
+        glowScale: _glowScale,
         getSong: () => _current,
         getQueue: () => _queue,
         getQueueIndex: () => _index,
@@ -1019,22 +1164,23 @@ class _HomeScreenState extends State<HomeScreen> {
         getShuffle: () => _shuffle,
         getLoop: () => _loop,
         getSpeed: () => _speed,
+        getPitch: () => _pitch,
         getSlowedReverb: () => _slowedReverb,
         getSleepMinutes: () => _sleepMinutes,
         getLoopA: () => _loopA,
         getLoopB: () => _loopB,
         player: _player,
         onTogglePlay: () => _playing ? _player.pause() : _player.play(),
-        onToggleFavorite: () {
-          if (_current != null) _toggleFavorite(_current!);
-        },
+        onToggleFavorite: () { if (_current != null) _toggleFavorite(_current!); },
         onNext: _next,
         onPrev: _prev,
         onSeekBy: _seekBy,
         onToggleSlowedReverb: () async {
           _slowedReverb = !_slowedReverb;
-          final targetSpeed = _slowedReverb ? 0.85 : 1.0;
+          final targetSpeed = _slowedReverb ? 0.85 : _speed;
+          final targetPitch = _slowedReverb ? 0.88 : _pitch;
           await _player.setSpeed(targetSpeed);
+          await _player.setPitch(targetPitch);
           if (_slowedReverb) {
             _eqPreset = 'Midnight';
             _eqGains = List<double>.from(kEqPresets['Midnight']!);
@@ -1043,28 +1189,21 @@ class _HomeScreenState extends State<HomeScreen> {
             _eqGains = List<double>.from(kEqPresets['Flat']!);
           }
           await _applyEq();
-          setState(() => _speed = targetSpeed);
+          setState(() {});
         },
         onOpenEq: _openEqSheet,
         onSetLoopA: (d) => setState(() => _loopA = d),
         onSetLoopB: (d) => setState(() => _loopB = d),
-        onClearAB: () => setState(() {
-          _loopA = null;
-          _loopB = null;
-        }),
+        onClearAB: () => setState(() { _loopA = null; _loopB = null; }),
         onJumpToQueueIndex: (idx) => _playFromQueue(_queue, idx),
         onReorderQueue: (oldIdx, newIdx) {
           setState(() {
             if (newIdx > oldIdx) newIdx -= 1;
             final item = _queue.removeAt(oldIdx);
             _queue.insert(newIdx, item);
-            if (_index == oldIdx) {
-              _index = newIdx;
-            } else if (oldIdx < _index && newIdx >= _index) {
-              _index -= 1;
-            } else if (oldIdx > _index && newIdx <= _index) {
-              _index += 1;
-            }
+            if (_index == oldIdx) { _index = newIdx; }
+            else if (oldIdx < _index && newIdx >= _index) { _index -= 1; }
+            else if (oldIdx > _index && newIdx <= _index) { _index += 1; }
           });
         },
         onToggleShuffle: () => setState(() => _shuffle = !_shuffle),
@@ -1075,21 +1214,13 @@ class _HomeScreenState extends State<HomeScreen> {
         },
         onSetSpeed: (s) async {
           await _player.setSpeed(s);
-          setState(() {
-            _speed = s;
-            _slowedReverb = false;
-          });
+          setState(() { _speed = s; _slowedReverb = false; });
         },
-        onSetSleep: (mins) {
-          _sleepTimer?.cancel();
-          setState(() => _sleepMinutes = mins);
-          if (mins != null) {
-            _sleepTimer = Timer(Duration(minutes: mins), () {
-              _player.pause();
-              if (mounted) setState(() => _sleepMinutes = null);
-            });
-          }
+        onSetPitch: (p) async {
+          await _player.setPitch(p);
+          setState(() { _pitch = p; _slowedReverb = false; });
         },
+        onSetSleep: _startFadeOutSleepTimer,
       ),
     ));
   }
@@ -1102,15 +1233,12 @@ class _HomeScreenState extends State<HomeScreen> {
       decoration: BoxDecoration(
         color: const Color(0xFF1A1A22),
         borderRadius: BorderRadius.circular(radius),
-        border: Border.all(color: active ? widget.accent.withValues(alpha: 0.75) : Colors.white10),
+        border: Border.all(color: active ? widget.accent.withValues(alpha: (0.65 * _glowScale).clamp(0.15, 1.0)) : Colors.white10),
         image: hasArt ? DecorationImage(image: FileImage(File(s.artPath!)), fit: BoxFit.cover) : null,
       ),
       child: active
           ? Container(
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: hasArt ? 0.45 : 0.0),
-                borderRadius: BorderRadius.circular(radius),
-              ),
+              decoration: BoxDecoration(color: Colors.black.withValues(alpha: hasArt ? 0.45 : 0.0), borderRadius: BorderRadius.circular(radius)),
               child: Center(child: AnimatedEqualizer(color: widget.accent, playing: _playing, size: size * 0.44)),
             )
           : (hasArt ? null : Icon(Icons.music_note_rounded, color: Colors.white70, size: size * 0.48)),
@@ -1120,7 +1248,10 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _sleepTimer?.cancel();
+    _sleepFadeTimer?.cancel();
     _statTimer?.cancel();
+    _noisySub?.cancel();
+    _shakeSub?.cancel();
     _player.dispose();
     super.dispose();
   }
@@ -1128,12 +1259,12 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final accent = widget.accent;
+    final glow = _glowScale;
     var filtered = _songs.where((s) {
       if (_filterTab == 1 && !s.favorite) return false;
+      if (_selectedMood.isNotEmpty && s.mood != _selectedMood) return false;
       if (_query.isEmpty) return true;
-      return s.title.toLowerCase().contains(_query) ||
-          s.artist.toLowerCase().contains(_query) ||
-          s.album.toLowerCase().contains(_query);
+      return s.title.toLowerCase().contains(_query) || s.artist.toLowerCase().contains(_query) || s.album.toLowerCase().contains(_query);
     }).toList();
     if (_sortAZ) {
       filtered.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
@@ -1158,41 +1289,24 @@ class _HomeScreenState extends State<HomeScreen> {
               gradient: RadialGradient(
                 center: const Alignment(0, -0.85),
                 radius: 1.2,
-                colors: [accent.withValues(alpha: 0.14), Colors.black],
+                colors: [accent.withValues(alpha: (0.14 * glow).clamp(0.03, 0.35)), Colors.black],
               ),
             ),
           ),
         ),
         if (_bgPath != null)
-          Positioned.fill(
-            child: Opacity(opacity: 0.25, child: Image.file(File(_bgPath!), fit: BoxFit.cover)),
-          ),
+          Positioned.fill(child: Opacity(opacity: 0.25, child: Image.file(File(_bgPath!), fit: BoxFit.cover))),
         Scaffold(
           backgroundColor: Colors.transparent,
           appBar: _selecting
               ? AppBar(
                   backgroundColor: const Color(0xFF14141C),
-                  leading: IconButton(
-                    icon: const Icon(Icons.close_rounded),
-                    onPressed: () => setState(() => _selectedIds.clear()),
-                  ),
+                  leading: IconButton(icon: const Icon(Icons.close_rounded), onPressed: () => setState(() => _selectedIds.clear())),
                   title: Text('${_selectedIds.length} selected', style: const TextStyle(fontWeight: FontWeight.w800)),
                   actions: [
-                    IconButton(
-                      tooltip: 'Like Selected',
-                      icon: Icon(Icons.favorite_rounded, color: accent),
-                      onPressed: _batchFavorite,
-                    ),
-                    IconButton(
-                      tooltip: 'Add to Playlist',
-                      icon: const Icon(Icons.playlist_add_rounded),
-                      onPressed: _batchAddToPlaylist,
-                    ),
-                    IconButton(
-                      tooltip: 'Delete Selected',
-                      icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
-                      onPressed: _batchDelete,
-                    ),
+                    IconButton(tooltip: 'Like Selected', icon: Icon(Icons.favorite_rounded, color: accent), onPressed: _batchFavorite),
+                    IconButton(tooltip: 'Add to Playlist', icon: const Icon(Icons.playlist_add_rounded), onPressed: _batchAddToPlaylist),
+                    IconButton(tooltip: 'Delete Selected', icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent), onPressed: _batchDelete),
                   ],
                 )
               : AppBar(
@@ -1213,11 +1327,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ],
                   ),
                   actions: [
-                    IconButton(
-                      tooltip: 'Scan Music Folder',
-                      icon: Icon(Icons.create_new_folder_rounded, color: accent),
-                      onPressed: _importFolder,
-                    ),
+                    IconButton(tooltip: 'Scan Music Folder', icon: Icon(Icons.create_new_folder_rounded, color: accent), onPressed: _importFolder),
                     FilledButton.icon(
                       style: FilledButton.styleFrom(backgroundColor: accent, foregroundColor: Colors.black),
                       onPressed: _importSongs,
@@ -1252,46 +1362,35 @@ class _HomeScreenState extends State<HomeScreen> {
                             children: [
                               ChoiceChip(
                                 label: Text('All (${_songs.length})'),
-                                selected: _filterTab == 0 && _browseMode == 0,
-                                onSelected: (_) => setState(() {
-                                  _filterTab = 0;
-                                  _browseMode = 0;
-                                }),
+                                selected: _filterTab == 0 && _browseMode == 0 && _selectedMood.isEmpty,
+                                onSelected: (_) => setState(() { _filterTab = 0; _browseMode = 0; _selectedMood = ''; }),
                               ),
                               const SizedBox(width: 8),
                               ChoiceChip(
                                 label: Text('Liked (${_songs.where((s) => s.favorite).length})'),
-                                selected: _filterTab == 1 && _browseMode == 0,
-                                onSelected: (_) => setState(() {
-                                  _filterTab = 1;
-                                  _browseMode = 0;
-                                }),
+                                selected: _filterTab == 1 && _browseMode == 0 && _selectedMood.isEmpty,
+                                onSelected: (_) => setState(() { _filterTab = 1; _browseMode = 0; _selectedMood = ''; }),
                               ),
+                              ...kMoodTags.map((m) => Padding(
+                                    padding: const EdgeInsets.only(left: 8),
+                                    child: ChoiceChip(
+                                      label: Text(m),
+                                      selected: _selectedMood == m,
+                                      onSelected: (_) => setState(() {
+                                        _browseMode = 0;
+                                        _selectedMood = _selectedMood == m ? '' : m;
+                                      }),
+                                    ),
+                                  )),
                               if (_enableBrowseTabs) ...[
                                 const SizedBox(width: 8),
-                                ChoiceChip(
-                                  label: const Text('Artists'),
-                                  selected: _browseMode == 1,
-                                  onSelected: (_) => setState(() => _browseMode = 1),
-                                ),
+                                ChoiceChip(label: const Text('Artists'), selected: _browseMode == 1, onSelected: (_) => setState(() => _browseMode = 1)),
                                 const SizedBox(width: 8),
-                                ChoiceChip(
-                                  label: const Text('Albums'),
-                                  selected: _browseMode == 2,
-                                  onSelected: (_) => setState(() => _browseMode = 2),
-                                ),
+                                ChoiceChip(label: const Text('Albums'), selected: _browseMode == 2, onSelected: (_) => setState(() => _browseMode = 2)),
                               ],
                               const SizedBox(width: 12),
-                              IconButton(
-                                tooltip: _sortAZ ? 'Sorted A-Z' : 'Sort A-Z',
-                                icon: Icon(Icons.sort_by_alpha_rounded, color: _sortAZ ? accent : Colors.white54),
-                                onPressed: () => setState(() => _sortAZ = !_sortAZ),
-                              ),
-                              IconButton(
-                                tooltip: 'Shuffle All',
-                                icon: Icon(Icons.shuffle_rounded, color: accent),
-                                onPressed: filtered.isEmpty ? null : () => _playFromQueue(filtered, 0, shuffleStart: true),
-                              ),
+                              IconButton(tooltip: _sortAZ ? 'Sorted A-Z' : 'Sort A-Z', icon: Icon(Icons.sort_by_alpha_rounded, color: _sortAZ ? accent : Colors.white54), onPressed: () => setState(() => _sortAZ = !_sortAZ)),
+                              IconButton(tooltip: 'Shuffle All', icon: Icon(Icons.shuffle_rounded, color: accent), onPressed: filtered.isEmpty ? null : () => _playFromQueue(filtered, 0, shuffleStart: true)),
                             ],
                           ),
                         ),
@@ -1338,9 +1437,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                         children: [
                                           Icon(Icons.library_music_rounded, size: 58, color: accent.withValues(alpha: 0.5)),
                                           const SizedBox(height: 12),
-                                          Text(_filterTab == 1 ? 'No Liked Tracks Yet' : 'Your Library is Empty', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                                          Text(_filterTab == 1 ? 'No Liked Tracks Yet' : 'No Matching Tracks', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
                                           const SizedBox(height: 6),
-                                          Text(_filterTab == 1 ? 'Swipe right or tap the heart on any song' : 'Tap + Add MP3s or the Folder icon to import music', style: const TextStyle(color: Colors.white60)),
+                                          Text(_filterTab == 1 ? 'Swipe right or tap the heart on any song' : 'Tap + Add MP3s or clear your active filter', style: const TextStyle(color: Colors.white60)),
                                         ],
                                       ),
                                     )
@@ -1380,26 +1479,21 @@ class _HomeScreenState extends State<HomeScreen> {
                                             decoration: BoxDecoration(
                                               color: isSelected
                                                   ? accent.withValues(alpha: 0.22)
-                                                  : (active ? accent.withValues(alpha: 0.12) : Colors.white.withValues(alpha: 0.045)),
+                                                  : (active ? accent.withValues(alpha: (0.12 * glow).clamp(0.05, 0.28)) : Colors.white.withValues(alpha: 0.045)),
                                               borderRadius: BorderRadius.circular(16),
-                                              border: Border.all(color: (isSelected || active) ? accent.withValues(alpha: 0.55) : Colors.white10),
+                                              border: Border.all(color: (isSelected || active) ? accent.withValues(alpha: (0.55 * glow).clamp(0.2, 0.95)) : Colors.white10),
                                             ),
                                             child: ListTile(
                                               contentPadding: const EdgeInsets.fromLTRB(12, 2, 4, 2),
                                               leading: isSelected
                                                   ? CircleAvatar(backgroundColor: accent, child: const Icon(Icons.check_rounded, color: Colors.black))
                                                   : _buildArtBox(s, active: active),
-                                              title: Text(
-                                                s.title,
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: TextStyle(fontWeight: FontWeight.w800, color: active ? accent : Colors.white),
-                                              ),
+                                              title: Text(s.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: FontWeight.w800, color: active ? accent : Colors.white)),
                                               subtitle: Text(
-                                                s.artist,
+                                                s.mood.isNotEmpty ? '${s.artist} • ${s.mood}' : s.artist,
                                                 maxLines: 1,
                                                 overflow: TextOverflow.ellipsis,
-                                                style: const TextStyle(color: Colors.white60, fontSize: 13),
+                                                style: TextStyle(color: s.mood.isNotEmpty ? accent.withValues(alpha: 0.85) : Colors.white60, fontSize: 13),
                                               ),
                                               trailing: _selecting
                                                   ? null
@@ -1413,9 +1507,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                                         PopupMenuButton<String>(
                                                           icon: const Icon(Icons.more_vert_rounded, color: Colors.white70),
                                                           onSelected: (v) async {
-                                                            if (v == 'next') {
-                                                              _playNextInQueue(s);
-                                                            } else if (v == 'pl') {
+                                                            if (v == 'next') { _playNextInQueue(s); }
+                                                            else if (v == 'mood') { await _setSongMood(s); }
+                                                            else if (v == 'pl') {
                                                               final name = await _promptText('Playlist name');
                                                               if (name != null && name.isNotEmpty) {
                                                                 final existing = _playlists.where((p) => p.name.toLowerCase() == name.toLowerCase()).toList();
@@ -1427,11 +1521,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                                                 await _saveData();
                                                                 setState(() {});
                                                               }
-                                                            } else if (v == 'ed') {
-                                                              await _editTrackDialog(s);
-                                                            } else if (v == 'art') {
-                                                              await _setSongArt(s);
-                                                            } else if (v == 'rm') {
+                                                            } else if (v == 'ed') { await _editTrackDialog(s); }
+                                                            else if (v == 'art') { await _setSongArt(s); }
+                                                            else if (v == 'rm') {
                                                               _songs.removeWhere((e) => e.id == s.id);
                                                               if (File(s.path).existsSync()) await File(s.path).delete();
                                                               await _saveData();
@@ -1440,6 +1532,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                                           },
                                                           itemBuilder: (ctx) => const [
                                                             PopupMenuItem(value: 'next', child: Text('Play Next')),
+                                                            PopupMenuItem(value: 'mood', child: Text('Set Vibe / Mood Tag')),
                                                             PopupMenuItem(value: 'pl', child: Text('Add to playlist')),
                                                             PopupMenuItem(value: 'ed', child: Text('Edit Title & Artist')),
                                                             PopupMenuItem(value: 'art', child: Text('Set Cover Art')),
@@ -1451,21 +1544,13 @@ class _HomeScreenState extends State<HomeScreen> {
                                               onLongPress: () {
                                                 HapticFeedback.mediumImpact();
                                                 setState(() {
-                                                  if (isSelected) {
-                                                    _selectedIds.remove(s.id);
-                                                  } else {
-                                                    _selectedIds.add(s.id);
-                                                  }
+                                                  if (isSelected) { _selectedIds.remove(s.id); } else { _selectedIds.add(s.id); }
                                                 });
                                               },
                                               onTap: () {
                                                 if (_selecting) {
                                                   setState(() {
-                                                    if (isSelected) {
-                                                      _selectedIds.remove(s.id);
-                                                    } else {
-                                                      _selectedIds.add(s.id);
-                                                    }
+                                                    if (isSelected) { _selectedIds.remove(s.id); } else { _selectedIds.add(s.id); }
                                                   });
                                                 } else {
                                                   _playFromQueue(filtered, i);
@@ -1572,172 +1657,63 @@ class _HomeScreenState extends State<HomeScreen> {
                           }),
                         ),
                         const SizedBox(height: 22),
-                        const Text('APP FONT STYLE', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.5, color: Colors.white60)),
+                        const Text('APP FONT & GLOW INTENSITY', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.5, color: Colors.white60)),
                         const SizedBox(height: 10),
                         Wrap(
                           spacing: 10,
                           children: List.generate(kFontNames.length, (i) {
-                            return ChoiceChip(
-                              label: Text(kFontNames[i], style: TextStyle(fontFamily: kFontFamilies[i])),
-                              selected: widget.fontIndex == i,
-                              onSelected: (_) => widget.onSelectFont(i),
-                            );
+                            return ChoiceChip(label: Text(kFontNames[i], style: TextStyle(fontFamily: kFontFamilies[i])), selected: widget.fontIndex == i, onSelected: (_) => widget.onSelectFont(i));
+                          }),
+                        ),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 10,
+                          children: List.generate(kGlowNames.length, (i) {
+                            return ChoiceChip(label: Text('Glow: ${kGlowNames[i]}'), selected: _glowLevel == i, onSelected: (_) async { setState(() => _glowLevel = i); await _saveData(); });
                           }),
                         ),
                         const SizedBox(height: 22),
                         const Text('BACKGROUND WALLPAPER', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.5, color: Colors.white60)),
                         const SizedBox(height: 10),
-                        ListTile(
-                          tileColor: Colors.white.withValues(alpha: 0.05),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                          leading: Icon(Icons.wallpaper_rounded, color: accent),
-                          title: const Text('Set Custom Background Wallpaper'),
-                          onTap: _pickWallpaper,
-                        ),
+                        ListTile(tileColor: Colors.white.withValues(alpha: 0.05), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), leading: Icon(Icons.wallpaper_rounded, color: accent), title: const Text('Set Custom Background Wallpaper'), onTap: _pickWallpaper),
                         if (_bgPath != null) ...[
                           const SizedBox(height: 10),
-                          ListTile(
-                            tileColor: Colors.white.withValues(alpha: 0.05),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                            leading: const Icon(Icons.hide_image_rounded, color: Colors.white70),
-                            title: const Text('Remove Background Wallpaper'),
-                            onTap: () async {
-                              _bgPath = null;
-                              await _saveData();
-                              setState(() {});
-                            },
-                          ),
+                          ListTile(tileColor: Colors.white.withValues(alpha: 0.05), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), leading: const Icon(Icons.hide_image_rounded, color: Colors.white70), title: const Text('Remove Background Wallpaper'), onTap: () async { _bgPath = null; await _saveData(); setState(() {}); }),
                         ],
                         const SizedBox(height: 22),
                         const Text('EXPERIENCE & AUDIO', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.5, color: Colors.white60)),
                         const SizedBox(height: 10),
-                        SwitchListTile(
-                          tileColor: Colors.white.withValues(alpha: 0.05),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                          title: const Text('Artist & Album Tabs in Library', style: TextStyle(fontWeight: FontWeight.w700)),
-                          subtitle: const Text('Toggle extra Artists & Albums filter chips'),
-                          value: _enableBrowseTabs,
-                          onChanged: (v) async {
-                            setState(() {
-                              _enableBrowseTabs = v;
-                              if (!v) _browseMode = 0;
-                            });
-                            await _saveData();
-                          },
-                        ),
+                        SwitchListTile(tileColor: Colors.white.withValues(alpha: 0.05), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), title: const Text('Artist & Album Tabs in Library', style: TextStyle(fontWeight: FontWeight.w700)), value: _enableBrowseTabs, onChanged: (v) async { setState(() { _enableBrowseTabs = v; if (!v) _browseMode = 0; }); await _saveData(); }),
                         const SizedBox(height: 8),
-                        SwitchListTile(
-                          tileColor: Colors.white.withValues(alpha: 0.05),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                          title: const Text('Dynamic Cover Color Glow', style: TextStyle(fontWeight: FontWeight.w700)),
-                          subtitle: const Text('Match accent color to current song cover'),
-                          value: _dynamicCoverColor,
-                          onChanged: (v) async {
-                            setState(() => _dynamicCoverColor = v);
-                            if (!v) {
-                              widget.onDynamicAccent(null);
-                            } else if (_current != null) {
-                              await _extractCoverColor(_current!);
-                            }
-                            await _saveData();
-                          },
-                        ),
+                        SwitchListTile(tileColor: Colors.white.withValues(alpha: 0.05), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), title: const Text('Dynamic Cover Color Glow', style: TextStyle(fontWeight: FontWeight.w700)), value: _dynamicCoverColor, onChanged: (v) async { setState(() => _dynamicCoverColor = v); if (!v) { widget.onDynamicAccent(null); } else if (_current != null) { await _extractCoverColor(_current!); } await _saveData(); }),
                         const SizedBox(height: 8),
-                        SwitchListTile(
-                          tileColor: Colors.white.withValues(alpha: 0.05),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                          title: const Text('Live Lyric Line on Mini-Player', style: TextStyle(fontWeight: FontWeight.w700)),
-                          subtitle: const Text('Show current synced lyric line while browsing'),
-                          value: _showMiniLyric,
-                          onChanged: (v) async {
-                            setState(() => _showMiniLyric = v);
-                            await _saveData();
-                          },
-                        ),
+                        SwitchListTile(tileColor: Colors.white.withValues(alpha: 0.05), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), title: const Text('Live Lyric Line on Mini-Player', style: TextStyle(fontWeight: FontWeight.w700)), value: _showMiniLyric, onChanged: (v) async { setState(() => _showMiniLyric = v); await _saveData(); }),
                         const SizedBox(height: 8),
-                        ListTile(
-                          tileColor: Colors.white.withValues(alpha: 0.05),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                          leading: Icon(Icons.blur_on_rounded, color: accent),
-                          title: Text('Smooth Crossfade: ${_crossfadeSec == 0 ? "Off" : "${_crossfadeSec}s"}', style: const TextStyle(fontWeight: FontWeight.w700)),
-                          subtitle: const Text('Tap to cycle 0s / 2s / 4s DJ fade'),
-                          onTap: () async {
-                            setState(() => _crossfadeSec = _crossfadeSec == 0 ? 2 : (_crossfadeSec == 2 ? 4 : 0));
-                            await _saveData();
-                          },
-                        ),
+                        SwitchListTile(tileColor: Colors.white.withValues(alpha: 0.05), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), title: const Text('Auto-Pause on Headphone Unplug', style: TextStyle(fontWeight: FontWeight.w700)), value: _autoPauseNoisy, onChanged: (v) async { setState(() => _autoPauseNoisy = v); await _saveData(); }),
+                        const SizedBox(height: 8),
+                        SwitchListTile(tileColor: Colors.white.withValues(alpha: 0.05), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), title: const Text('Shake Phone to Skip / Shuffle', style: TextStyle(fontWeight: FontWeight.w700)), value: _shakeToSkip, onChanged: (v) async { setState(() => _shakeToSkip = v); await _saveData(); }),
+                        const SizedBox(height: 8),
+                        SwitchListTile(tileColor: Colors.white.withValues(alpha: 0.05), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), title: const Text('Smart Volume Normalizer', style: TextStyle(fontWeight: FontWeight.w700)), value: _volumeNormalizer, onChanged: (v) async { setState(() => _volumeNormalizer = v); await _player.setVolume(v ? 0.85 : 1.0); await _saveData(); }),
+                        const SizedBox(height: 8),
+                        ListTile(tileColor: Colors.white.withValues(alpha: 0.05), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), leading: Icon(Icons.blur_on_rounded, color: accent), title: Text('Smooth Crossfade: ${_crossfadeSec == 0 ? "Off" : "${_crossfadeSec}s"}', style: const TextStyle(fontWeight: FontWeight.w700)), onTap: () async { setState(() => _crossfadeSec = _crossfadeSec == 0 ? 2 : (_crossfadeSec == 2 ? 4 : 0)); await _saveData(); }),
                         const SizedBox(height: 22),
                         const Text('STATS & LIBRARY TOOLS', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.5, color: Colors.white60)),
                         const SizedBox(height: 10),
-                        ListTile(
-                          tileColor: Colors.white.withValues(alpha: 0.05),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                          leading: Icon(Icons.bar_chart_rounded, color: accent),
-                          title: const Text('Most Played & Wrapped Stats', style: TextStyle(fontWeight: FontWeight.w800)),
-                          subtitle: const Text('View top tracks, minutes listened & top artist'),
-                          trailing: const Icon(Icons.chevron_right_rounded, color: Colors.white54),
-                          onTap: _openMostPlayedAndWrappedSheet,
-                        ),
+                        ListTile(tileColor: Colors.white.withValues(alpha: 0.05), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), leading: Icon(Icons.bar_chart_rounded, color: accent), title: const Text('Most Played & Wrapped Stats', style: TextStyle(fontWeight: FontWeight.w800)), trailing: const Icon(Icons.chevron_right_rounded, color: Colors.white54), onTap: _openMostPlayedAndWrappedSheet),
                         const SizedBox(height: 8),
-                        ListTile(
-                          tileColor: Colors.white.withValues(alpha: 0.05),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                          leading: Icon(Icons.cleaning_services_rounded, color: accent),
-                          title: const Text('Find & Remove Duplicate Tracks', style: TextStyle(fontWeight: FontWeight.w700)),
-                          onTap: _removeDuplicates,
-                        ),
+                        ListTile(tileColor: Colors.white.withValues(alpha: 0.05), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), leading: Icon(Icons.cleaning_services_rounded, color: accent), title: const Text('Find & Remove Duplicate Tracks', style: TextStyle(fontWeight: FontWeight.w700)), onTap: _removeDuplicates),
                         const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: _exportBackup,
-                                icon: const Icon(Icons.upload_file_rounded, size: 18),
-                                label: const Text('Export Backup'),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: _restoreBackup,
-                                icon: const Icon(Icons.download_rounded, size: 18),
-                                label: const Text('Restore Backup'),
-                              ),
-                            ),
-                          ],
-                        ),
+                        Row(children: [
+                          Expanded(child: OutlinedButton.icon(onPressed: _exportBackup, icon: const Icon(Icons.upload_file_rounded, size: 18), label: const Text('Export Backup'))),
+                          const SizedBox(width: 10),
+                          Expanded(child: OutlinedButton.icon(onPressed: _restoreBackup, icon: const Icon(Icons.download_rounded, size: 18), label: const Text('Restore Backup'))),
+                        ]),
                         const SizedBox(height: 24),
                         const Text('APP HEADER TITLE', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.5, color: Colors.white60)),
                         const SizedBox(height: 10),
-                        ListTile(
-                          tileColor: Colors.white.withValues(alpha: 0.05),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                          leading: Icon(Icons.edit_rounded, color: accent),
-                          title: Text(_bannerTitle, style: const TextStyle(fontWeight: FontWeight.w800)),
-                          subtitle: const Text('Tap to customize top header banner'),
-                          onTap: () async {
-                            final name = await _promptText('App Header Title', initial: _bannerTitle);
-                            if (name != null && name.isNotEmpty) {
-                              setState(() => _bannerTitle = name);
-                              await _saveData();
-                            }
-                          },
-                        ),
+                        ListTile(tileColor: Colors.white.withValues(alpha: 0.05), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), leading: Icon(Icons.edit_rounded, color: accent), title: Text(_bannerTitle, style: const TextStyle(fontWeight: FontWeight.w800)), subtitle: const Text('Tap to customize top header banner'), onTap: () async { final name = await _promptText('App Header Title', initial: _bannerTitle); if (name != null && name.isNotEmpty) { setState(() => _bannerTitle = name); await _saveData(); } }),
                         const SizedBox(height: 28),
-                        Center(
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
-                            decoration: BoxDecoration(
-                              color: accent.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(color: accent.withValues(alpha: 0.38)),
-                            ),
-                            child: Text(
-                              'made by Aakas',
-                              style: TextStyle(fontSize: 13, letterSpacing: 1.6, color: accent, fontWeight: FontWeight.w800),
-                            ),
-                          ),
-                        ),
+                        Center(child: Container(padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9), decoration: BoxDecoration(color: accent.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20), border: Border.all(color: accent.withValues(alpha: 0.38))), child: Text('made by Aakas', style: TextStyle(fontSize: 13, letterSpacing: 1.6, color: accent, fontWeight: FontWeight.w800)))),
                       ],
                     ),
           bottomNavigationBar: Column(
@@ -1748,22 +1724,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   onTap: _openNowPlaying,
                   onHorizontalDragEnd: (details) {
                     final v = details.primaryVelocity ?? 0;
-                    if (v < -250) {
-                      HapticFeedback.lightImpact();
-                      _next();
-                    } else if (v > 250) {
-                      HapticFeedback.lightImpact();
-                      _prev();
-                    }
+                    if (v < -250) { HapticFeedback.lightImpact(); _next(); }
+                    else if (v > 250) { HapticFeedback.lightImpact(); _prev(); }
                   },
                   child: Container(
                     margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
                     clipBehavior: Clip.antiAlias,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF181822).withValues(alpha: 0.92),
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: accent.withValues(alpha: 0.4)),
-                    ),
+                    decoration: BoxDecoration(color: const Color(0xFF181822).withValues(alpha: 0.92), borderRadius: BorderRadius.circular(18), border: Border.all(color: accent.withValues(alpha: (0.4 * glow).clamp(0.15, 0.9)))),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -1778,29 +1745,16 @@ class _HomeScreenState extends State<HomeScreen> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(_current!.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w800)),
-                                    Text(
-                                      activeMiniLyric.isNotEmpty ? activeMiniLyric : _current!.artist,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(fontSize: 12, color: activeMiniLyric.isNotEmpty ? accent : Colors.white60),
-                                    ),
+                                    Text(activeMiniLyric.isNotEmpty ? activeMiniLyric : _current!.artist, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: activeMiniLyric.isNotEmpty ? accent : Colors.white60)),
                                   ],
                                 ),
                               ),
-                              IconButton(
-                                icon: Icon(_playing ? Icons.pause_circle_filled_rounded : Icons.play_circle_filled_rounded, size: 34, color: accent),
-                                onPressed: () => _playing ? _player.pause() : _player.play(),
-                              ),
+                              IconButton(icon: Icon(_playing ? Icons.pause_circle_filled_rounded : Icons.play_circle_filled_rounded, size: 34, color: accent), onPressed: () => _playing ? _player.pause() : _player.play()),
                               IconButton(icon: const Icon(Icons.skip_next_rounded), onPressed: _next),
                             ],
                           ),
                         ),
-                        LinearProgressIndicator(
-                          value: progress,
-                          minHeight: 2.5,
-                          backgroundColor: Colors.white10,
-                          valueColor: AlwaysStoppedAnimation<Color>(accent),
-                        ),
+                        LinearProgressIndicator(value: progress, minHeight: 2.5, backgroundColor: Colors.white10, valueColor: AlwaysStoppedAnimation<Color>(accent)),
                       ],
                     ),
                   ),
@@ -1824,11 +1778,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-
 class NowPlayingSheet extends StatefulWidget {
   const NowPlayingSheet({
     super.key,
     required this.accent,
+    required this.glowScale,
     required this.getSong,
     required this.getQueue,
     required this.getQueueIndex,
@@ -1838,6 +1792,7 @@ class NowPlayingSheet extends StatefulWidget {
     required this.getShuffle,
     required this.getLoop,
     required this.getSpeed,
+    required this.getPitch,
     required this.getSlowedReverb,
     required this.getSleepMinutes,
     required this.getLoopA,
@@ -1858,10 +1813,12 @@ class NowPlayingSheet extends StatefulWidget {
     required this.onToggleShuffle,
     required this.onCycleLoop,
     required this.onSetSpeed,
+    required this.onSetPitch,
     required this.onSetSleep,
   });
 
   final Color accent;
+  final double glowScale;
   final Song? Function() getSong;
   final List<Song> Function() getQueue;
   final int Function() getQueueIndex;
@@ -1871,6 +1828,7 @@ class NowPlayingSheet extends StatefulWidget {
   final bool Function() getShuffle;
   final LoopMode Function() getLoop;
   final double Function() getSpeed;
+  final double Function() getPitch;
   final bool Function() getSlowedReverb;
   final int? Function() getSleepMinutes;
   final Duration? Function() getLoopA;
@@ -1891,6 +1849,7 @@ class NowPlayingSheet extends StatefulWidget {
   final VoidCallback onToggleShuffle;
   final Future<void> Function() onCycleLoop;
   final Future<void> Function(double) onSetSpeed;
+  final Future<void> Function(double) onSetPitch;
   final void Function(int?) onSetSleep;
 
   @override
@@ -1902,7 +1861,9 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderSt
   String _plainLyrics = '';
   bool _loadingLyrics = false;
   bool _fullScreenLyrics = false;
-  bool _vinylMode = false;
+  int _artSkin = 0; // 0 = Square, 1 = Vinyl, 2 = Cassette
+  double _dragTilt = 0.0;
+  String _seekFlash = '';
   bool _carMode = false;
   bool _showRemaining = false;
   bool _syncingMode = false;
@@ -1912,14 +1873,8 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderSt
   int _lastActiveIdx = -1;
   Timer? _uiTick;
   final ScrollController _lyricScroll = ScrollController();
-  late final AnimationController _spinCtrl = AnimationController(
-    vsync: this,
-    duration: const Duration(seconds: 12),
-  )..repeat();
-  late final AnimationController _pulseCtrl = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 900),
-  )..repeat(reverse: true);
+  late final AnimationController _spinCtrl = AnimationController(vsync: this, duration: const Duration(seconds: 12))..repeat();
+  late final AnimationController _pulseCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 900))..repeat(reverse: true);
 
   @override
   void initState() {
@@ -1934,10 +1889,7 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderSt
         if (_pulseCtrl.isAnimating) _pulseCtrl.stop();
       }
       final cur = widget.getSong();
-      if (cur != null && cur.id != _loadedSongId) {
-        _syncingMode = false;
-        _fetchLyrics(cur);
-      }
+      if (cur != null && cur.id != _loadedSongId) { _syncingMode = false; _fetchLyrics(cur); }
       final idx = _lyrics.lastIndexWhere((l) => l.at <= widget.getPos());
       if (idx != _lastActiveIdx && idx >= 0 && _lyricScroll.hasClients) {
         _lastActiveIdx = idx;
@@ -1950,18 +1902,13 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderSt
     if (cur != null) _fetchLyrics(cur);
   }
 
-  String _stripJunk(String s) {
-    final noParens = s.replaceAll(RegExp(r'\([^)]*\)'), '').replaceAll(RegExp(r'\[[^\]]*\]'), '');
-    return noParens.replaceAll('_', ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
-  }
+  String _stripJunk(String s) => s.replaceAll(RegExp(r'\([^)]*\)'), '').replaceAll(RegExp(r'\[[^\]]*\]'), '').replaceAll('_', ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
 
   Future<List<dynamic>> _queryLrclib(String q) async {
-    final cleanQ = q.trim();
-    if (cleanQ.isEmpty) return const [];
-    final uri = Uri.parse('https://lrclib.net{Uri.encodeComponent(cleanQ)}');
+    if (q.trim().isEmpty) return const [];
+    final uri = Uri.parse('https://lrclib.net{Uri.encodeComponent(q.trim())}');
     final res = await http.get(uri, headers: {'User-Agent': 'TypeShiApp/1.0'}).timeout(const Duration(seconds: 6));
-    if (res.statusCode == 200) return jsonDecode(res.body) as List;
-    return const [];
+    return res.statusCode == 200 ? jsonDecode(res.body) as List : const [];
   }
 
   void _applyLyricPayload(String synced, String plain) {
@@ -1970,30 +1917,17 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderSt
     for (final line in synced.split('\n')) {
       final m = rx.firstMatch(line);
       if (m != null) {
-        final min = int.parse(m.group(1)!);
-        final sec = int.parse(m.group(2)!);
-        final ms = int.parse(m.group(3)!.padRight(3, '0').substring(0, 3));
         final txt = m.group(4)!.trim();
-        if (txt.isNotEmpty) parsed.add(LyricLine(Duration(minutes: min, seconds: sec, milliseconds: ms), txt));
+        if (txt.isNotEmpty) parsed.add(LyricLine(Duration(minutes: int.parse(m.group(1)!), seconds: int.parse(m.group(2)!), milliseconds: int.parse(m.group(3)!.padRight(3, '0').substring(0, 3))), txt));
       }
     }
-    if (mounted) {
-      setState(() {
-        _lyrics = parsed;
-        _plainLyrics = (parsed.isEmpty && plain.isNotEmpty) ? plain : '';
-      });
-    }
+    if (mounted) setState(() { _lyrics = parsed; _plainLyrics = (parsed.isEmpty && plain.isNotEmpty) ? plain : ''; });
   }
 
   Future<void> _fetchLyrics(Song song, {String? customQuery}) async {
     _loadedSongId = song.id;
     _lastActiveIdx = -1;
-    setState(() {
-      _loadingLyrics = true;
-      _lyrics = [];
-      _plainLyrics = '';
-    });
-
+    setState(() { _loadingLyrics = true; _lyrics = []; _plainLyrics = ''; });
     final prefs = await SharedPreferences.getInstance();
     final cacheKey = 'lyrics_${song.id}';
     if (customQuery == null) {
@@ -2005,23 +1939,12 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderSt
         return;
       }
     }
-
     try {
       final cleanTitle = _stripJunk(song.title);
       final cleanArtist = song.artist == 'Unknown Artist' ? '' : _stripJunk(song.artist);
-      final cleanAlbum = _stripJunk(song.album);
-      final queries = <String>[
-        if (customQuery != null) customQuery,
-        '$cleanTitle $cleanArtist'.trim(),
-        if (cleanArtist.isNotEmpty) '$cleanArtist $cleanTitle'.trim(),
-        if (cleanAlbum.isNotEmpty && cleanAlbum.toLowerCase() != cleanArtist.toLowerCase()) '$cleanTitle $cleanAlbum'.trim(),
-        cleanTitle,
-      ];
+      final queries = <String>[if (customQuery != null) customQuery, '$cleanTitle $cleanArtist'.trim(), if (cleanArtist.isNotEmpty) '$cleanArtist $cleanTitle'.trim(), cleanTitle];
       List<dynamic> list = const [];
-      for (final q in queries.toSet()) {
-        list = await _queryLrclib(q);
-        if (list.isNotEmpty) break;
-      }
+      for (final q in queries.toSet()) { list = await _queryLrclib(q); if (list.isNotEmpty) break; }
       if (list.isNotEmpty) {
         final best = list.firstWhere((e) => (e['syncedLyrics'] ?? '').toString().isNotEmpty, orElse: () => list.first);
         final synced = (best['syncedLyrics'] ?? '').toString();
@@ -2041,10 +1964,7 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderSt
         backgroundColor: const Color(0xFF16161C),
         title: const Text('Search Lyrics'),
         content: TextField(controller: c, autofocus: true, decoration: const InputDecoration(hintText: 'Artist and song title')),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, c.text.trim()), child: const Text('Search')),
-        ],
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')), FilledButton(onPressed: () => Navigator.pop(ctx, c.text.trim()), child: const Text('Search'))],
       ),
     );
     if (q != null && q.isNotEmpty) await _fetchLyrics(song, customQuery: q);
@@ -2054,32 +1974,18 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderSt
     final raw = _plainLyrics.isNotEmpty ? _plainLyrics : _lyrics.map((e) => e.text).join('\n');
     final lines = raw.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
     if (lines.isEmpty) return;
-    setState(() {
-      _syncLines = lines;
-      _recordedSync = [];
-      _syncingMode = true;
-    });
+    setState(() { _syncLines = lines; _recordedSync = []; _syncingMode = true; });
   }
 
   Future<void> _recordNextSyncLine(Song song) async {
     if (_recordedSync.length >= _syncLines.length) return;
     HapticFeedback.lightImpact();
-    final idx = _recordedSync.length;
-    _recordedSync.add(LyricLine(widget.getPos(), _syncLines[idx]));
+    _recordedSync.add(LyricLine(widget.getPos(), _syncLines[_recordedSync.length]));
     if (_recordedSync.length == _syncLines.length) {
-      final lrc = _recordedSync.map((l) {
-        final m = l.at.inMinutes.toString().padLeft(2, '0');
-        final s = (l.at.inSeconds % 60).toString().padLeft(2, '0');
-        final ms = ((l.at.inMilliseconds % 1000) ~/ 10).toString().padLeft(2, '0');
-        return '[$m:$s.$ms] ${l.text}';
-      }).join('\n');
+      final lrc = _recordedSync.map((l) => '[${l.at.inMinutes.toString().padLeft(2, '0')}:${(l.at.inSeconds % 60).toString().padLeft(2, '0')}.${((l.at.inMilliseconds % 1000) ~/ 10).toString().padLeft(2, '0')}] ${l.text}').join('\n');
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('lyrics_${song.id}', jsonEncode({'synced': lrc, 'plain': _syncLines.join('\n')}));
-      setState(() {
-        _lyrics = List<LyricLine>.from(_recordedSync);
-        _plainLyrics = '';
-        _syncingMode = false;
-      });
+      setState(() { _lyrics = List<LyricLine>.from(_recordedSync); _plainLyrics = ''; _syncingMode = false; });
     } else {
       setState(() {});
     }
@@ -2098,23 +2004,11 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderSt
             children: [
               const SizedBox(height: 12),
               Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(4))),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
-                child: Row(
-                  children: [
-                    Text('UP NEXT (${q.length})', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.5, color: widget.accent)),
-                    const Spacer(),
-                    const Text('Drag to reorder', style: TextStyle(fontSize: 12, color: Colors.white54)),
-                  ],
-                ),
-              ),
+              Padding(padding: const EdgeInsets.fromLTRB(20, 14, 20, 8), child: Row(children: [Text('UP NEXT (${q.length})', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.5, color: widget.accent)), const Spacer(), const Text('Drag to reorder', style: TextStyle(fontSize: 12, color: Colors.white54))])),
               Expanded(
                 child: ReorderableListView.builder(
                   itemCount: q.length,
-                  onReorder: (oldIndex, newIndex) {
-                    widget.onReorderQueue(oldIndex, newIndex);
-                    setSheetState(() {});
-                  },
+                  onReorder: (oldIndex, newIndex) { widget.onReorderQueue(oldIndex, newIndex); setSheetState(() {}); },
                   itemBuilder: (_, i) {
                     final item = q[i];
                     final isCurrent = i == curIdx;
@@ -2123,10 +2017,7 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderSt
                       leading: Icon(isCurrent ? Icons.equalizer_rounded : Icons.drag_handle_rounded, color: isCurrent ? widget.accent : Colors.white54),
                       title: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: FontWeight.w800, color: isCurrent ? widget.accent : Colors.white)),
                       subtitle: Text(item.artist, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white54)),
-                      onTap: () {
-                        Navigator.pop(ctx);
-                        widget.onJumpToQueueIndex(i);
-                      },
+                      onTap: () { Navigator.pop(ctx); widget.onJumpToQueueIndex(i); },
                     );
                   },
                 ),
@@ -2150,70 +2041,34 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderSt
   }
 
   Widget _buildLyricsCard(Song song, int activeIdx, {required double height}) {
+    final pos = widget.getPos();
     return Container(
       height: height,
       padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: widget.accent.withValues(alpha: 0.3)),
-      ),
+      decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.45), borderRadius: BorderRadius.circular(24), border: Border.all(color: widget.accent.withValues(alpha: (0.3 * widget.glowScale).clamp(0.15, 0.8)))),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Text(_syncingMode ? 'SYNC MODE' : 'LYRICS', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.5, fontSize: 12, color: widget.accent)),
+              Text(_syncingMode ? 'SYNC MODE' : 'KARAOKE LYRICS', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.5, fontSize: 12, color: widget.accent)),
               const Spacer(),
-              if (!_syncingMode && (_plainLyrics.isNotEmpty || _lyrics.isNotEmpty))
-                IconButton(
-                  icon: const Icon(Icons.timer_rounded, size: 20),
-                  tooltip: 'Tap-to-Sync Lyrics',
-                  onPressed: _startSyncMode,
-                ),
-              IconButton(
-                icon: const Icon(Icons.content_paste_rounded, size: 20),
-                tooltip: 'Paste Lyrics',
-                onPressed: () async {
-                  final clip = await Clipboard.getData('text/plain');
-                  final txt = (clip?.text ?? '').trim();
-                  if (txt.isNotEmpty) {
-                    final prefs = await SharedPreferences.getInstance();
-                    await prefs.setString('lyrics_${song.id}', jsonEncode({'synced': '', 'plain': txt}));
-                    _syncingMode = false;
-                    _applyLyricPayload('', txt);
-                  }
-                },
-              ),
+              if (!_syncingMode && (_plainLyrics.isNotEmpty || _lyrics.isNotEmpty)) IconButton(icon: const Icon(Icons.timer_rounded, size: 20), tooltip: 'Tap-to-Sync Lyrics', onPressed: _startSyncMode),
+              IconButton(icon: const Icon(Icons.content_paste_rounded, size: 20), tooltip: 'Paste Lyrics', onPressed: () async { final clip = await Clipboard.getData('text/plain'); final txt = (clip?.text ?? '').trim(); if (txt.isNotEmpty) { final prefs = await SharedPreferences.getInstance(); await prefs.setString('lyrics_${song.id}', jsonEncode({'synced': '', 'plain': txt})); _syncingMode = false; _applyLyricPayload('', txt); } }),
               IconButton(icon: const Icon(Icons.search_rounded, size: 20), onPressed: () => _manualLyricSearch(song)),
-              IconButton(
-                icon: Icon(_fullScreenLyrics ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded, size: 22),
-                onPressed: () => setState(() => _fullScreenLyrics = !_fullScreenLyrics),
-              ),
+              IconButton(icon: Icon(_fullScreenLyrics ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded, size: 22), onPressed: () => setState(() => _fullScreenLyrics = !_fullScreenLyrics)),
             ],
           ),
           const SizedBox(height: 6),
           Expanded(
             child: _syncingMode
-                ? Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text('Line ${_recordedSync.length + 1} of ${_syncLines.length}', style: const TextStyle(fontSize: 12, color: Colors.white54)),
-                      const SizedBox(height: 10),
-                      Text(
-                        _recordedSync.length < _syncLines.length ? _syncLines[_recordedSync.length] : 'Done!',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: widget.accent),
-                      ),
-                      const SizedBox(height: 16),
-                      FilledButton.icon(
-                        style: FilledButton.styleFrom(backgroundColor: widget.accent, foregroundColor: Colors.black),
-                        onPressed: () => _recordNextSyncLine(song),
-                        icon: const Icon(Icons.touch_app_rounded),
-                        label: const Text('Tap on Beat for Next Line', style: TextStyle(fontWeight: FontWeight.w800)),
-                      ),
-                    ],
-                  )
+                ? Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    Text('Line ${_recordedSync.length + 1} of ${_syncLines.length}', style: const TextStyle(fontSize: 12, color: Colors.white54)),
+                    const SizedBox(height: 10),
+                    Text(_recordedSync.length < _syncLines.length ? _syncLines[_recordedSync.length] : 'Done!', textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: widget.accent)),
+                    const SizedBox(height: 16),
+                    FilledButton.icon(style: FilledButton.styleFrom(backgroundColor: widget.accent, foregroundColor: Colors.black), onPressed: () => _recordNextSyncLine(song), icon: const Icon(Icons.touch_app_rounded), label: const Text('Tap on Beat for Next Line', style: TextStyle(fontWeight: FontWeight.w800))),
+                  ])
                 : _loadingLyrics
                     ? Center(child: CircularProgressIndicator(color: widget.accent))
                     : _lyrics.isNotEmpty
@@ -2222,25 +2077,19 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderSt
                             itemCount: _lyrics.length,
                             itemBuilder: (_, i) {
                               final active = i == activeIdx;
+                              final startMs = _lyrics[i].at.inMilliseconds;
+                              final endMs = (i + 1 < _lyrics.length) ? _lyrics[i + 1].at.inMilliseconds : (startMs + 3000);
+                              final fillPct = active ? ((pos.inMilliseconds - startMs) / (endMs - startMs).clamp(400, 12000)).clamp(0.0, 1.0) : 0.0;
                               return GestureDetector(
                                 onTap: () => widget.player.seek(_lyrics[i].at),
                                 child: AnimatedContainer(
                                   duration: const Duration(milliseconds: 220),
                                   margin: const EdgeInsets.symmetric(vertical: 3),
                                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                  decoration: BoxDecoration(
-                                    color: active ? widget.accent.withValues(alpha: 0.14) : Colors.transparent,
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: AnimatedDefaultTextStyle(
-                                    duration: const Duration(milliseconds: 200),
-                                    style: TextStyle(
-                                      fontSize: active ? 20 : 15,
-                                      fontWeight: active ? FontWeight.w900 : FontWeight.w600,
-                                      color: active ? widget.accent : Colors.white54,
-                                    ),
-                                    child: Text(_lyrics[i].text),
-                                  ),
+                                  decoration: BoxDecoration(color: active ? widget.accent.withValues(alpha: 0.14) : Colors.transparent, borderRadius: BorderRadius.circular(12)),
+                                  child: active
+                                      ? ShaderMask(shaderCallback: (b) => LinearGradient(stops: [fillPct, (fillPct + 0.06).clamp(0.0, 1.0)], colors: [widget.accent, Colors.white.withValues(alpha: 0.55)]).createShader(b), child: Text(_lyrics[i].text, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Colors.white)))
+                                      : Text(_lyrics[i].text, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white54)),
                                 ),
                               );
                             },
@@ -2255,75 +2104,49 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderSt
   }
 
   Widget _buildArtDisc(Song song, Color accent, bool hasArt) {
-    final squareArt = Container(
-      width: 232,
-      height: 232,
-      decoration: BoxDecoration(
-        color: const Color(0xFF16161E),
-        borderRadius: BorderRadius.circular(28),
-        image: hasArt ? DecorationImage(image: FileImage(File(song.artPath!)), fit: BoxFit.cover) : null,
-      ),
-      child: hasArt ? null : Icon(Icons.graphic_eq_rounded, size: 96, color: accent),
-    );
-    final vinylDisc = RotationTransition(
-      turns: _spinCtrl,
-      child: Container(
-        width: 232,
-        height: 232,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: const Color(0xFF111116),
-          border: Border.all(color: Colors.white12, width: 6),
-        ),
-        child: Center(
-          child: Container(
-            width: 108,
-            height: 108,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: const Color(0xFF1E1E28),
-              border: Border.all(color: accent, width: 3),
-              image: hasArt ? DecorationImage(image: FileImage(File(song.artPath!)), fit: BoxFit.cover) : null,
-            ),
-            child: Center(child: Container(width: 20, height: 20, decoration: const BoxDecoration(color: Colors.black, shape: BoxShape.circle))),
-          ),
-        ),
-      ),
-    );
+    final glow = widget.glowScale;
+    final squareArt = Container(width: 228, height: 228, decoration: BoxDecoration(color: const Color(0xFF16161E), borderRadius: BorderRadius.circular(28), image: hasArt ? DecorationImage(image: FileImage(File(song.artPath!)), fit: BoxFit.cover) : null), child: hasArt ? null : Icon(Icons.graphic_eq_rounded, size: 96, color: accent));
+    final vinylDisc = RotationTransition(turns: _spinCtrl, child: Container(width: 228, height: 228, decoration: BoxDecoration(shape: BoxShape.circle, color: const Color(0xFF111116), border: Border.all(color: Colors.white12, width: 6)), child: Center(child: Container(width: 106, height: 106, decoration: BoxDecoration(shape: BoxShape.circle, color: const Color(0xFF1E1E28), border: Border.all(color: accent, width: 3), image: hasArt ? DecorationImage(image: FileImage(File(song.artPath!)), fit: BoxFit.cover) : null), child: Center(child: Container(width: 20, height: 20, decoration: const BoxDecoration(color: Colors.black, shape: BoxShape.circle)))))));
+    final cassetteSkin = Container(width: 244, height: 164, padding: const EdgeInsets.all(14), decoration: BoxDecoration(color: const Color(0xFF16161E), borderRadius: BorderRadius.circular(20), border: Border.all(color: accent.withValues(alpha: 0.7), width: 2)), child: Column(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+      Container(width: double.infinity, padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(color: accent.withValues(alpha: 0.16), borderRadius: BorderRadius.circular(8)), child: Text(song.title.toUpperCase(), maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.2, color: accent))),
+      Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [RotationTransition(turns: _spinCtrl, child: Icon(Icons.settings_rounded, size: 46, color: accent)), Container(width: 54, height: 26, decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(6), border: Border.all(color: Colors.white12))), RotationTransition(turns: _spinCtrl, child: Icon(Icons.settings_rounded, size: 46, color: accent))]),
+      const Text('TYPE SHI • HIGH BIAS STEREO TAPE', style: TextStyle(fontSize: 9, letterSpacing: 1.5, color: Colors.white54, fontWeight: FontWeight.w800)),
+    ]));
+    final activeSkinWidget = _artSkin == 1 ? vinylDisc : (_artSkin == 2 ? cassetteSkin : squareArt);
     return GestureDetector(
-      onTap: () => setState(() => _vinylMode = !_vinylMode),
+      onTap: () => setState(() => _artSkin = (_artSkin + 1) % 3),
+      onDoubleTapDown: (details) {
+        final isLeft = details.localPosition.dx < 120;
+        HapticFeedback.lightImpact();
+        widget.onSeekBy(isLeft ? -10 : 10);
+        setState(() => _seekFlash = isLeft ? '-10s' : '+10s');
+        Future.delayed(const Duration(milliseconds: 650), () { if (mounted) setState(() => _seekFlash = ''); });
+      },
+      onHorizontalDragUpdate: (d) => setState(() => _dragTilt = (_dragTilt + d.delta.dx * 0.004).clamp(-0.35, 0.35)),
       onHorizontalDragEnd: (details) {
         final v = details.primaryVelocity ?? 0;
-        if (v < -250) {
-          HapticFeedback.lightImpact();
-          widget.onNext();
-        } else if (v > 250) {
-          HapticFeedback.lightImpact();
-          widget.onPrev();
-        }
+        setState(() => _dragTilt = 0.0);
+        if (v < -250) { HapticFeedback.lightImpact(); widget.onNext(); } else if (v > 250) { HapticFeedback.lightImpact(); widget.onPrev(); }
       },
-      child: Column(
-        children: [
-          AnimatedBuilder(
-            animation: _pulseCtrl,
-            builder: (_, child) {
-              final glow = widget.getPlaying() ? (14.0 + 18.0 * _pulseCtrl.value) : 12.0;
-              return Container(
-                padding: const EdgeInsets.all(4),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(_vinylMode ? 140 : 32),
-                  border: Border.all(color: accent.withValues(alpha: widget.getPlaying() ? 0.55 : 0.2), width: 2),
-                  boxShadow: [BoxShadow(color: accent.withValues(alpha: 0.28), blurRadius: glow, spreadRadius: 2)],
-                ),
-                child: child,
-              );
-            },
-            child: AnimatedSwitcher(duration: const Duration(milliseconds: 300), child: _vinylMode ? vinylDisc : squareArt),
-          ),
-          const SizedBox(height: 8),
-          Text(_vinylMode ? 'Swipe cover to skip • Tap for square' : 'Swipe cover to skip • Tap for Vinyl', style: const TextStyle(fontSize: 11, color: Colors.white38)),
-        ],
-      ),
+      child: Column(children: [
+        Transform(
+          alignment: Alignment.center,
+          transform: Matrix4.identity()..setEntry(3, 2, 0.0015)..rotateY(_dragTilt),
+          child: Stack(alignment: Alignment.center, children: [
+            AnimatedBuilder(
+              animation: _pulseCtrl,
+              builder: (_, child) {
+                final blur = (widget.getPlaying() ? (14.0 + 18.0 * _pulseCtrl.value) : 10.0) * glow;
+                return Container(padding: const EdgeInsets.all(4), decoration: BoxDecoration(borderRadius: BorderRadius.circular(_artSkin == 1 ? 140 : (_artSkin == 2 ? 24 : 32)), border: Border.all(color: accent.withValues(alpha: ((widget.getPlaying() ? 0.55 : 0.2) * glow).clamp(0.1, 1.0)), width: 2), boxShadow: [BoxShadow(color: accent.withValues(alpha: (0.28 * glow).clamp(0.05, 0.65)), blurRadius: blur, spreadRadius: 2 * glow)]), child: child);
+              },
+              child: AnimatedSwitcher(duration: const Duration(milliseconds: 280), child: activeSkinWidget),
+            ),
+            if (_seekFlash.isNotEmpty) Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.78), borderRadius: BorderRadius.circular(16)), child: Text(_seekFlash, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: accent))),
+          ]),
+        ),
+        const SizedBox(height: 8),
+        Text('Tap skin (${['Square', 'Vinyl', 'Cassette'][_artSkin]}) • Double-tap sides ±10s • Swipe to skip', style: const TextStyle(fontSize: 11, color: Colors.white38)),
+      ]),
     );
   }
 
@@ -2338,6 +2161,7 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderSt
     final shuffle = widget.getShuffle();
     final loop = widget.getLoop();
     final speed = widget.getSpeed();
+    final pitch = widget.getPitch();
     final slowed = widget.getSlowedReverb();
     final sleepMins = widget.getSleepMinutes();
     final loopA = widget.getLoopA();
@@ -2355,223 +2179,80 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderSt
         title: Text(_carMode ? 'CAR MODE' : 'NOW PLAYING', style: const TextStyle(fontSize: 12, letterSpacing: 2, fontWeight: FontWeight.w800)),
         centerTitle: true,
         actions: [
-          IconButton(
-            icon: Icon(Icons.directions_car_rounded, color: _carMode ? accent : Colors.white),
-            tooltip: 'Car Gesture Mode',
-            onPressed: () => setState(() => _carMode = !_carMode),
-          ),
-          IconButton(icon: const Icon(Icons.equalizer_rounded), tooltip: '5-Band Equalizer', onPressed: widget.onOpenEq),
+          IconButton(icon: Icon(Icons.directions_car_rounded, color: _carMode ? accent : Colors.white), onPressed: () => setState(() => _carMode = !_carMode)),
+          IconButton(icon: const Icon(Icons.equalizer_rounded), onPressed: widget.onOpenEq),
           IconButton(icon: const Icon(Icons.queue_music_rounded), onPressed: _openQueueSheet),
           PopupMenuButton<int?>(
             icon: Icon(Icons.bedtime_rounded, color: sleepMins != null ? Colors.amber : Colors.white),
             onSelected: widget.onSetSleep,
-            itemBuilder: (ctx) => const [
-              PopupMenuItem(value: null, child: Text('Sleep Timer: Off')),
-              PopupMenuItem(value: 15, child: Text('15 minutes')),
-              PopupMenuItem(value: 30, child: Text('30 minutes')),
-              PopupMenuItem(value: 60, child: Text('60 minutes')),
-            ],
+            itemBuilder: (ctx) => const [PopupMenuItem(value: null, child: Text('Sleep Timer: Off')), PopupMenuItem(value: 15, child: Text('15 min (15s Fade-Out)')), PopupMenuItem(value: 30, child: Text('30 min (15s Fade-Out)')), PopupMenuItem(value: 60, child: Text('60 min (15s Fade-Out)'))],
           ),
         ],
       ),
-      body: Stack(
-        children: [
-          if (hasArt)
-            Positioned.fill(
-              child: ImageFiltered(
-                imageFilter: ImageFilter.blur(sigmaX: 35, sigmaY: 35),
-                child: Opacity(opacity: 0.35, child: Image.file(File(song.artPath!), fit: BoxFit.cover)),
-              ),
-            ),
-          Positioned.fill(
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: RadialGradient(
-                  center: const Alignment(0, -0.5),
-                  radius: 1.1,
-                  colors: [accent.withValues(alpha: 0.16), const Color(0xFF08080C).withValues(alpha: 0.88)],
-                ),
-              ),
-            ),
-          ),
-          SafeArea(
-            child: _carMode
-                ? GestureDetector(
-                    onTap: widget.onTogglePlay,
-                    onHorizontalDragEnd: (d) {
-                      final v = d.primaryVelocity ?? 0;
-                      if (v < -200) widget.onNext();
-                      if (v > 200) widget.onPrev();
-                    },
-                    child: Container(
-                      color: Colors.transparent,
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(song.title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w900)),
-                          const SizedBox(height: 8),
-                          Text(song.artist, textAlign: TextAlign.center, style: const TextStyle(fontSize: 18, color: Colors.white60)),
-                          const SizedBox(height: 44),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                            children: [
-                              IconButton(icon: const Icon(Icons.skip_previous_rounded, size: 54), onPressed: widget.onPrev),
-                              FloatingActionButton.large(
-                                backgroundColor: accent,
-                                foregroundColor: Colors.black,
-                                onPressed: widget.onTogglePlay,
-                                child: Icon(playing ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 54),
-                              ),
-                              IconButton(icon: const Icon(Icons.skip_next_rounded, size: 54), onPressed: widget.onNext),
-                            ],
-                          ),
-                          const SizedBox(height: 36),
-                          const Text('Tap anywhere to Play/Pause • Swipe left/right to skip', style: TextStyle(color: Colors.white54, fontSize: 13)),
-                        ],
-                      ),
-                    ),
-                  )
-                : _fullScreenLyrics
-                    ? Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                        child: Column(
-                          children: [
-                            Expanded(child: _buildLyricsCard(song, activeIdx, height: double.infinity)),
-                            const SizedBox(height: 12),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                              children: [
-                                IconButton(icon: const Icon(Icons.skip_previous_rounded, size: 32), onPressed: widget.onPrev),
-                                IconButton(icon: const Icon(Icons.replay_10_rounded, size: 28), onPressed: () => widget.onSeekBy(-10)),
-                                FloatingActionButton(
-                                  backgroundColor: accent,
-                                  foregroundColor: Colors.black,
-                                  onPressed: widget.onTogglePlay,
-                                  child: Icon(playing ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 34),
-                                ),
-                                IconButton(icon: const Icon(Icons.forward_10_rounded, size: 28), onPressed: () => widget.onSeekBy(10)),
-                                IconButton(icon: const Icon(Icons.skip_next_rounded, size: 32), onPressed: widget.onNext),
-                              ],
-                            ),
-                          ],
-                        ),
-                      )
-                    : ListView(
-                        padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-                        children: [
-                          Center(child: _buildArtDisc(song, accent, hasArt)),
-                          const SizedBox(height: 16),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(song.title, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
-                                    const SizedBox(height: 2),
-                                    Text(song.artist, style: const TextStyle(fontSize: 15, color: Colors.white60)),
-                                  ],
-                                ),
-                              ),
-                              IconButton(
-                                icon: Icon(song.favorite ? Icons.favorite_rounded : Icons.favorite_border_rounded, color: song.favorite ? accent : Colors.white54),
-                                onPressed: widget.onToggleFavorite,
-                              ),
-                              InkWell(
-                                onTap: widget.onToggleSlowedReverb,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                  margin: const EdgeInsets.only(right: 6),
-                                  decoration: BoxDecoration(
-                                    color: slowed ? accent.withValues(alpha: 0.22) : Colors.white10,
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  child: Text('Slow+Rev', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: slowed ? accent : Colors.white70)),
-                                ),
-                              ),
-                              Container(
-                                decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(10)),
-                                child: TextButton(
-                                  onPressed: () {
-                                    final next = speed == 1.0 ? 1.25 : (speed == 1.25 ? 1.5 : (speed == 1.5 ? 0.75 : 1.0));
-                                    widget.onSetSpeed(next);
-                                  },
-                                  child: Text('${speed}x', style: TextStyle(fontWeight: FontWeight.w800, color: accent)),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          Slider(
-                            value: dur.inMilliseconds > 0 ? pos.inMilliseconds.clamp(0, dur.inMilliseconds).toDouble() : 0,
-                            max: dur.inMilliseconds > 0 ? dur.inMilliseconds.toDouble() : 1,
-                            onChanged: (v) => widget.player.seek(Duration(milliseconds: v.toInt())),
-                          ),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(_fmt(pos), style: const TextStyle(fontSize: 12, color: Colors.white60)),
-                              Row(
-                                children: [
-                                  InkWell(
-                                    onTap: () => widget.onSetLoopA(pos),
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                      decoration: BoxDecoration(color: loopA != null ? accent.withValues(alpha: 0.22) : Colors.white10, borderRadius: BorderRadius.circular(8)),
-                                      child: Text(loopA != null ? 'A ${_fmt(loopA)}' : 'Set A', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: loopA != null ? accent : Colors.white60)),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  InkWell(
-                                    onTap: () => widget.onSetLoopB(pos),
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                      decoration: BoxDecoration(color: loopB != null ? accent.withValues(alpha: 0.22) : Colors.white10, borderRadius: BorderRadius.circular(8)),
-                                      child: Text(loopB != null ? 'B ${_fmt(loopB)}' : 'Set B', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: loopB != null ? accent : Colors.white60)),
-                                    ),
-                                  ),
-                                  if (loopA != null || loopB != null) ...[
-                                    const SizedBox(width: 4),
-                                    InkWell(onTap: widget.onClearAB, child: const Icon(Icons.close_rounded, size: 16, color: Colors.white54)),
-                                  ],
-                                ],
-                              ),
-                              GestureDetector(
-                                onTap: () => setState(() => _showRemaining = !_showRemaining),
-                                child: Text(_showRemaining ? '-${_fmt(remaining)}' : _fmt(dur), style: const TextStyle(fontSize: 12, color: Colors.white60)),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              IconButton(icon: Icon(Icons.shuffle_rounded, color: shuffle ? accent : Colors.white38, size: 22), onPressed: widget.onToggleShuffle),
-                              IconButton(icon: const Icon(Icons.skip_previous_rounded, size: 32), onPressed: widget.onPrev),
-                              IconButton(icon: const Icon(Icons.replay_10_rounded, size: 28), onPressed: () => widget.onSeekBy(-10)),
-                              FloatingActionButton.large(
-                                backgroundColor: accent,
-                                foregroundColor: Colors.black,
-                                onPressed: widget.onTogglePlay,
-                                child: Icon(playing ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 42),
-                              ),
-                              IconButton(icon: const Icon(Icons.forward_10_rounded, size: 28), onPressed: () => widget.onSeekBy(10)),
-                              IconButton(icon: const Icon(Icons.skip_next_rounded, size: 32), onPressed: widget.onNext),
-                              IconButton(
-                                icon: Icon(loop == LoopMode.one ? Icons.repeat_one_rounded : Icons.repeat_rounded, color: loop != LoopMode.off ? accent : Colors.white38, size: 22),
-                                onPressed: widget.onCycleLoop,
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 22),
-                          _buildLyricsCard(song, activeIdx, height: 270),
-                        ],
-                      ),
-          ),
-        ],
-      ),
+      body: Stack(children: [
+        if (hasArt) Positioned.fill(child: ImageFiltered(imageFilter: ImageFilter.blur(sigmaX: 35, sigmaY: 35), child: Opacity(opacity: 0.35, child: Image.file(File(song.artPath!), fit: BoxFit.cover)))),
+        Positioned.fill(child: Container(decoration: BoxDecoration(gradient: RadialGradient(center: const Alignment(0, -0.5), radius: 1.1, colors: [accent.withValues(alpha: 0.16), const Color(0xFF08080C).withValues(alpha: 0.88)])))),
+        SafeArea(
+          child: _carMode
+              ? GestureDetector(
+                  onTap: widget.onTogglePlay,
+                  onHorizontalDragEnd: (d) { final v = d.primaryVelocity ?? 0; if (v < -200) widget.onNext(); if (v > 200) widget.onPrev(); },
+                  child: Container(color: Colors.transparent, padding: const EdgeInsets.all(24), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    Text(song.title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w900)),
+                    const SizedBox(height: 8),
+                    Text(song.artist, textAlign: TextAlign.center, style: const TextStyle(fontSize: 18, color: Colors.white60)),
+                    const SizedBox(height: 44),
+                    Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [IconButton(icon: const Icon(Icons.skip_previous_rounded, size: 54), onPressed: widget.onPrev), FloatingActionButton.large(backgroundColor: accent, foregroundColor: Colors.black, onPressed: widget.onTogglePlay, child: Icon(playing ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 54)), IconButton(icon: const Icon(Icons.skip_next_rounded, size: 54), onPressed: widget.onNext)]),
+                    const SizedBox(height: 36),
+                    const Text('Tap anywhere to Play/Pause • Swipe left/right to skip', style: TextStyle(color: Colors.white54, fontSize: 13)),
+                  ])),
+                )
+              : _fullScreenLyrics
+                  ? Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 16), child: Column(children: [
+                      Expanded(child: _buildLyricsCard(song, activeIdx, height: double.infinity)),
+                      const SizedBox(height: 12),
+                      Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [IconButton(icon: const Icon(Icons.skip_previous_rounded, size: 32), onPressed: widget.onPrev), IconButton(icon: const Icon(Icons.replay_10_rounded, size: 28), onPressed: () => widget.onSeekBy(-10)), FloatingActionButton(backgroundColor: accent, foregroundColor: Colors.black, onPressed: widget.onTogglePlay, child: Icon(playing ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 34)), IconButton(icon: const Icon(Icons.forward_10_rounded, size: 28), onPressed: () => widget.onSeekBy(10)), IconButton(icon: const Icon(Icons.skip_next_rounded, size: 32), onPressed: widget.onNext)]),
+                    ]))
+                  : ListView(padding: const EdgeInsets.fromLTRB(20, 8, 20, 20), children: [
+                      Center(child: _buildArtDisc(song, accent, hasArt)),
+                      const SizedBox(height: 14),
+                      Row(children: [
+                        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(song.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w900)), const SizedBox(height: 2), Text(song.artist, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14, color: Colors.white60))])),
+                        IconButton(icon: Icon(song.favorite ? Icons.favorite_rounded : Icons.favorite_border_rounded, color: song.favorite ? accent : Colors.white54), onPressed: widget.onToggleFavorite),
+                      ]),
+                      const SizedBox(height: 6),
+                      SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [
+                        InkWell(onTap: widget.onToggleSlowedReverb, child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: slowed ? accent.withValues(alpha: 0.22) : Colors.white10, borderRadius: BorderRadius.circular(10)), child: Text('Slow+Rev', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: slowed ? accent : Colors.white70)))),
+                        const SizedBox(width: 8),
+                        InkWell(onTap: () => widget.onSetSpeed(speed == 1.0 ? 1.25 : (speed == 1.25 ? 1.5 : (speed == 1.5 ? 0.75 : 1.0))), child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(10)), child: Text('Speed ${speed}x', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: accent)))),
+                        const SizedBox(width: 8),
+                        InkWell(onTap: () => widget.onSetPitch(pitch == 1.0 ? 1.15 : (pitch == 1.15 ? 1.3 : (pitch == 1.3 ? 0.85 : 1.0))), child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(10)), child: Text('Pitch ${pitch}x', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: accent)))),
+                      ])),
+                      const SizedBox(height: 6),
+                      Slider(value: dur.inMilliseconds > 0 ? pos.inMilliseconds.clamp(0, dur.inMilliseconds).toDouble() : 0, max: dur.inMilliseconds > 0 ? dur.inMilliseconds.toDouble() : 1, onChanged: (v) => widget.player.seek(Duration(milliseconds: v.toInt()))),
+                      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                        Text(_fmt(pos), style: const TextStyle(fontSize: 12, color: Colors.white60)),
+                        Row(children: [
+                          InkWell(onTap: () => widget.onSetLoopA(pos), child: Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: loopA != null ? accent.withValues(alpha: 0.22) : Colors.white10, borderRadius: BorderRadius.circular(8)), child: Text(loopA != null ? 'A ${_fmt(loopA)}' : 'Set A', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: loopA != null ? accent : Colors.white60)))),
+                          const SizedBox(width: 6),
+                          InkWell(onTap: () => widget.onSetLoopB(pos), child: Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: loopB != null ? accent.withValues(alpha: 0.22) : Colors.white10, borderRadius: BorderRadius.circular(8)), child: Text(loopB != null ? 'B ${_fmt(loopB)}' : 'Set B', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: loopB != null ? accent : Colors.white60)))),
+                          if (loopA != null || loopB != null) ...[const SizedBox(width: 4), InkWell(onTap: widget.onClearAB, child: const Icon(Icons.close_rounded, size: 16, color: Colors.white54))],
+                        ]),
+                        GestureDetector(onTap: () => setState(() => _showRemaining = !_showRemaining), child: Text(_showRemaining ? '-${_fmt(remaining)}' : _fmt(dur), style: const TextStyle(fontSize: 12, color: Colors.white60))),
+                      ]),
+                      const SizedBox(height: 12),
+                      Row(children: [
+                        Expanded(child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [IconButton(padding: EdgeInsets.zero, constraints: const BoxConstraints(), icon: Icon(Icons.shuffle_rounded, color: shuffle ? accent : Colors.white38, size: 20), onPressed: widget.onToggleShuffle), IconButton(padding: EdgeInsets.zero, constraints: const BoxConstraints(), icon: const Icon(Icons.skip_previous_rounded, size: 30), onPressed: widget.onPrev), IconButton(padding: EdgeInsets.zero, constraints: const BoxConstraints(), icon: const Icon(Icons.replay_10_rounded, size: 26), onPressed: () => widget.onSeekBy(-10))])),
+                        const SizedBox(width: 8),
+                        FloatingActionButton.large(backgroundColor: accent, foregroundColor: Colors.black, onPressed: widget.onTogglePlay, child: Icon(playing ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 42)),
+                        const SizedBox(width: 8),
+                        Expanded(child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [IconButton(padding: EdgeInsets.zero, constraints: const BoxConstraints(), icon: const Icon(Icons.forward_10_rounded, size: 26), onPressed: () => widget.onSeekBy(10)), IconButton(padding: EdgeInsets.zero, constraints: const BoxConstraints(), icon: const Icon(Icons.skip_next_rounded, size: 30), onPressed: widget.onNext), IconButton(padding: EdgeInsets.zero, constraints: const BoxConstraints(), icon: Icon(loop == LoopMode.one ? Icons.repeat_one_rounded : Icons.repeat_rounded, color: loop != LoopMode.off ? accent : Colors.white38, size: 20), onPressed: widget.onCycleLoop)])),
+                      ]),
+                      const SizedBox(height: 22),
+                      _buildLyricsCard(song, activeIdx, height: 270),
+                    ]),
+        ),
+      ]),
     );
   }
 }
-
