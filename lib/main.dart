@@ -334,8 +334,7 @@ class _SplashWrapperState extends State<SplashWrapper> with SingleTickerProvider
                           borderRadius: BorderRadius.circular(20),
                           border: Border.all(color: accent.withValues(alpha: 0.45)),
                         ),
-                        child: Text(
-                          style: TextStyle(
+                        child: Text('', style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w800,
                             letterSpacing: 1.5,
@@ -1201,8 +1200,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               borderRadius: BorderRadius.circular(20),
                               border: Border.all(color: accent.withValues(alpha: 0.35)),
                             ),
-                            child: Text(
-                              style: TextStyle(fontSize: 12, letterSpacing: 1.5, color: accent, fontWeight: FontWeight.w800),
+                            child: Text('', style: TextStyle(fontSize: 12, letterSpacing: 1.5, color: accent, fontWeight: FontWeight.w800),
                             ),
                           ),
                         ),
@@ -1556,6 +1554,7 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with SingleTickerProv
             children: [
               Text('LYRICS', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.5, fontSize: 12, color: widget.accent)),
               const Spacer(),
+              IconButton(icon: const Icon(Icons.content_paste_rounded, size: 20), tooltip: 'Paste Lyrics', onPressed: () async { final clip = await Clipboard.getData('text/plain'); final txt = (clip?.text ?? '').trim(); if (txt.isNotEmpty) { final prefs = await SharedPreferences.getInstance(); await prefs.setString('lyrics_${song.id}', jsonEncode({'synced': '', 'plain': txt})); _applyLyricPayload('', txt); } }),
               IconButton(icon: const Icon(Icons.search_rounded, size: 20), onPressed: () => _manualLyricSearch(song)),
               IconButton(
                 icon: Icon(_fullScreenLyrics ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded, size: 22),
@@ -1802,4 +1801,10 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with SingleTickerProv
     );
   }
 }
+
+
+
+
+
+
 
