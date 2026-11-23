@@ -58,7 +58,7 @@ class MainActivity : FlutterActivity() {
 
                 override fun onSensorChanged(event: SensorEvent?) {
                     val v = event?.values ?: return
-                    val gForce = sqrt((v*v + v*v + v*v).toDouble()) / 9.81
+                    val gForce = sqrt((v[0]*v[0] + v[1]*v[1] + v[2]*v[2]).toDouble()) / 9.81
                     val now = System.currentTimeMillis()
                     if (gForce > 2.35 && now - lastShakeTime > 1200) {
                         lastShakeTime = now
@@ -71,4 +71,5 @@ class MainActivity : FlutterActivity() {
         )
     }
 }
+
 
