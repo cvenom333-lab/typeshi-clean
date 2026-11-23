@@ -227,7 +227,7 @@ class _TypeShiAppState extends State<TypeShiApp> {
           trackHeight: 3.5,
         ),
       ),
-      home: SplashWrapper(
+      home: HomeScreen(
         accent: accent,
         accentIndex: _accentIndex,
         onSelectAccent: _setAccent,
@@ -335,7 +335,6 @@ class _SplashWrapperState extends State<SplashWrapper> with SingleTickerProvider
                           border: Border.all(color: accent.withValues(alpha: 0.45)),
                         ),
                         child: Text(
-                          'made by aakas',
                           style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w800,
@@ -827,7 +826,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ],
                 ),
-                Text('made by aakas', style: TextStyle(fontSize: 11, color: accent.withValues(alpha: 0.75), fontWeight: FontWeight.w600, letterSpacing: 1.1)),
               ],
             ),
             actions: [
@@ -1204,7 +1202,6 @@ class _HomeScreenState extends State<HomeScreen> {
                               border: Border.all(color: accent.withValues(alpha: 0.35)),
                             ),
                             child: Text(
-                              'TYPE SHI - made by aakas',
                               style: TextStyle(fontSize: 12, letterSpacing: 1.5, color: accent, fontWeight: FontWeight.w800),
                             ),
                           ),
@@ -1805,3 +1802,4 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with SingleTickerProv
     );
   }
 }
+
