@@ -24,6 +24,7 @@ Future<void> main() async {
     systemNavigationBarColor: Colors.black,
   ));
   runApp(const TypeShiApp());
+}
 
 const List<Color> kAccentPalette = [
   Color(0xFFFFFFFF),
@@ -63,6 +64,7 @@ class VibePack {
   final bool amoled;
   final bool frosted;
   final int glowLevel;
+}
 
 const List<VibePack> kVibePacks = [
   VibePack('Midnight Crimson', 'Pure black + Neon Red', Color(0xFFFF2E55), 0, true, false, 2),
@@ -111,6 +113,7 @@ class Song {
 
   Map<String, dynamic> toJson() => {'id': id, 'title': title, 'artist': artist, 'album': album, 'path': path, 'artPath': artPath, 'favorite': favorite, 'playCount': playCount, 'durationMs': durationMs, 'mood': mood};
   factory Song.fromJson(Map<String, dynamic> j) => Song(id: j['id'] ?? '', title: j['title'] ?? 'Unknown', artist: j['artist'] ?? 'Unknown Artist', album: j['album'] ?? '', path: j['path'] ?? '', artPath: j['artPath'], favorite: j['favorite'] ?? false, playCount: j['playCount'] ?? 0, durationMs: j['durationMs'] ?? 0, mood: j['mood'] ?? '');
+}
 
 class Playlist {
   Playlist({required this.id, required this.name, required this.songIds});
@@ -119,11 +122,13 @@ class Playlist {
   final List<String> songIds;
   Map<String, dynamic> toJson() => {'id': id, 'name': name, 'songIds': songIds};
   factory Playlist.fromJson(Map<String, dynamic> j) => Playlist(id: j['id'] ?? '', name: j['name'] ?? 'Playlist', songIds: List<String>.from(j['songIds'] ?? const []));
+}
 
 class LyricLine {
   const LyricLine(this.at, this.text);
   final Duration at;
   final String text;
+}
 
 class MarqueeText extends StatefulWidget {
   const MarqueeText(this.text, {super.key, required this.style});
@@ -131,6 +136,7 @@ class MarqueeText extends StatefulWidget {
   final TextStyle style;
   @override
   State<MarqueeText> createState() => _MarqueeTextState();
+}
 
 class _MarqueeTextState extends State<MarqueeText> {
   final ScrollController _sc = ScrollController();
@@ -141,30 +147,18 @@ class _MarqueeTextState extends State<MarqueeText> {
     _t = Timer.periodic(const Duration(milliseconds: 50), (_) {
       if (!_sc.hasClients || _sc.position.maxScrollExtent <= 0) return;
       final next = _sc.offset + 1.0;
-      if (next >= _sc.position.maxScrollExtent) {
-        _sc.jumpTo(0);
-      } else {
-        _sc.jumpTo(next);
-      }
+      if (next >= _sc.position.maxScrollExtent) { _sc.jumpTo(0); } else { _sc.jumpTo(next); }
     });
   }
 
   @override
-  void dispose() {
-    _t?.cancel();
-    _sc.dispose();
-    super.dispose();
-  }
+  void dispose() { _t?.cancel(); _sc.dispose(); super.dispose(); }
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      controller: _sc,
-      scrollDirection: Axis.horizontal,
-      physics: const NeverScrollableScrollPhysics(),
-      child: Text('${widget.text}     ', style: widget.style),
-    );
+    return SingleChildScrollView(controller: _sc, scrollDirection: Axis.horizontal, physics: const NeverScrollableScrollPhysics(), child: Text('${widget.text}     ', style: widget.style));
   }
+}
 
 class ProceduralNeonCover extends StatelessWidget {
   const ProceduralNeonCover({super.key, required this.seedText, required this.accent, required this.size, this.radius = 12});
@@ -182,25 +176,15 @@ class ProceduralNeonCover extends StatelessWidget {
     final effective1 = accent == Colors.black ? const Color(0xFF22222A) : c1;
     final effective2 = accent == Colors.black ? const Color(0xFF0A0A0E) : c2;
     return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(radius),
-        gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [effective1, effective2, Colors.black]),
-      ),
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Container(
-            width: size * 0.62,
-            height: size * 0.62,
-            decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.white.withValues(alpha: 0.25), width: 1.5)),
-          ),
-          Icon(Icons.graphic_eq_rounded, color: Colors.white.withValues(alpha: 0.9), size: size * 0.44),
-        ],
-      ),
+      width: size, height: size,
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(radius), gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [effective1, effective2, Colors.black])),
+      child: Stack(alignment: Alignment.center, children: [
+        Container(width: size * 0.62, height: size * 0.62, decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.white.withValues(alpha: 0.25), width: 1.5))),
+        Icon(Icons.graphic_eq_rounded, color: Colors.white.withValues(alpha: 0.9), size: size * 0.44),
+      ]),
     );
   }
+}
 
 class AnimatedEqualizer extends StatefulWidget {
   const AnimatedEqualizer({super.key, required this.color, required this.playing, this.size = 20});
@@ -209,14 +193,12 @@ class AnimatedEqualizer extends StatefulWidget {
   final double size;
   @override
   State<AnimatedEqualizer> createState() => _AnimatedEqualizerState();
+}
 
 class _AnimatedEqualizerState extends State<AnimatedEqualizer> with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 650))..repeat(reverse: true);
   @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
+  void dispose() { _ctrl.dispose(); super.dispose(); }
 
   @override
   Widget build(BuildContext context) {
@@ -225,18 +207,11 @@ class _AnimatedEqualizerState extends State<AnimatedEqualizer> with SingleTicker
       builder: (_, __) {
         final t = widget.playing ? _ctrl.value : 0.25;
         final vals = [0.35 + 0.65 * math.sin(t * math.pi).abs(), 0.35 + 0.65 * math.cos(t * math.pi * 0.85).abs(), 0.35 + 0.65 * math.sin((1 - t) * math.pi).abs()];
-        return SizedBox(
-          width: widget.size,
-          height: widget.size,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: vals.map((f) => Container(width: widget.size * 0.2, height: widget.size * f, decoration: BoxDecoration(color: widget.color, borderRadius: BorderRadius.circular(4)))).toList(),
-          ),
-        );
+        return SizedBox(width: widget.size, height: widget.size, child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, crossAxisAlignment: CrossAxisAlignment.end, children: vals.map((f) => Container(width: widget.size * 0.2, height: widget.size * f, decoration: BoxDecoration(color: widget.color, borderRadius: BorderRadius.circular(4)))).toList()));
       },
     );
   }
+}
 
 class AmbientParticleOverlay extends StatefulWidget {
   const AmbientParticleOverlay({super.key, required this.mode, required this.accent});
@@ -244,29 +219,20 @@ class AmbientParticleOverlay extends StatefulWidget {
   final Color accent;
   @override
   State<AmbientParticleOverlay> createState() => _AmbientParticleOverlayState();
+}
 
 class _AmbientParticleOverlayState extends State<AmbientParticleOverlay> with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 10))..repeat();
   final List<Offset> _seeds = List.generate(26, (i) => Offset((i * 37 % 100) / 100.0, (i * 53 % 100) / 100.0));
   @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
+  void dispose() { _ctrl.dispose(); super.dispose(); }
 
   @override
   Widget build(BuildContext context) {
     if (widget.mode == 'Off') return const SizedBox.shrink();
-    return IgnorePointer(
-      child: AnimatedBuilder(
-        animation: _ctrl,
-        builder: (_, __) => CustomPaint(
-          size: Size.infinite,
-          painter: _ParticlePainter(_seeds, _ctrl.value, widget.mode, widget.accent),
-        ),
-      ),
-    );
+    return IgnorePointer(child: AnimatedBuilder(animation: _ctrl, builder: (_, __) => CustomPaint(size: Size.infinite, painter: _ParticlePainter(_seeds, _ctrl.value, widget.mode, widget.accent))));
   }
+}
 
 class _ParticlePainter extends CustomPainter {
   _ParticlePainter(this.seeds, this.t, this.mode, this.accent);
@@ -277,18 +243,11 @@ class _ParticlePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final color = mode == 'Embers'
-        ? const Color(0xFFFF5722)
-        : mode == 'Snow'
-            ? Colors.white
-            : mode == 'Sparkles'
-                ? const Color(0xFFFFD54F)
-                : (accent == Colors.black ? Colors.white70 : accent);
+    final color = mode == 'Embers' ? const Color(0xFFFF5722) : mode == 'Snow' ? Colors.white : mode == 'Sparkles' ? const Color(0xFFFFD54F) : (accent == Colors.black ? Colors.white70 : accent);
     final paint = Paint()..color = color.withValues(alpha: 0.32);
     for (int i = 0; i < seeds.length; i++) {
       final s = seeds[i];
-      final falling = mode == 'Snow';
-      final dy = falling ? ((s.dy + t * (0.6 + (i % 3) * 0.2)) % 1.0) : ((1.0 + s.dy - t * (0.5 + (i % 3) * 0.2)) % 1.0);
+      final dy = mode == 'Snow' ? ((s.dy + t * (0.6 + (i % 3) * 0.2)) % 1.0) : ((1.0 + s.dy - t * (0.5 + (i % 3) * 0.2)) % 1.0);
       final dx = (s.dx + math.sin((t * 2 * math.pi) + i) * 0.03) % 1.0;
       canvas.drawCircle(Offset(dx * size.width, dy * size.height), 1.8 + (i % 3), paint);
     }
@@ -296,6 +255,7 @@ class _ParticlePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _ParticlePainter old) => true;
+}
 
 class MatrixVisualizerBar extends StatefulWidget {
   const MatrixVisualizerBar({super.key, required this.accent, required this.playing});
@@ -303,6 +263,7 @@ class MatrixVisualizerBar extends StatefulWidget {
   final bool playing;
   @override
   State<MatrixVisualizerBar> createState() => _MatrixVisualizerBarState();
+}
 
 class _MatrixVisualizerBarState extends State<MatrixVisualizerBar> {
   final _rng = math.Random();
@@ -312,28 +273,19 @@ class _MatrixVisualizerBarState extends State<MatrixVisualizerBar> {
   void initState() {
     super.initState();
     _t = Timer.periodic(const Duration(milliseconds: 110), (_) {
-      if (!mounted) return;
-      setState(() {
-        _cols = List.generate(24, (_) => widget.playing ? ['0', '1', '█', '▓', '▒', '░', '#'][_rng.nextInt(7)] : '·');
-      });
+      if (mounted) setState(() => _cols = List.generate(24, (_) => widget.playing ? ['0', '1', '█', '▓', '▒', '░', '#'][_rng.nextInt(7)] : '·'));
     });
   }
 
   @override
-  void dispose() {
-    _t?.cancel();
-    super.dispose();
-  }
+  void dispose() { _t?.cancel(); super.dispose(); }
 
   @override
   Widget build(BuildContext context) {
     final c = widget.accent == Colors.black ? Colors.white : widget.accent;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(10), border: Border.all(color: c.withValues(alpha: 0.35))),
-      child: Text(_cols.join(' '), maxLines: 1, overflow: TextOverflow.clip, style: TextStyle(fontFamily: 'monospace', fontSize: 11, fontWeight: FontWeight.w900, color: c)),
-    );
+    return Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(10), border: Border.all(color: c.withValues(alpha: 0.35))), child: Text(_cols.join(' '), maxLines: 1, overflow: TextOverflow.clip, style: TextStyle(fontFamily: 'monospace', fontSize: 11, fontWeight: FontWeight.w900, color: c)));
   }
+}
 
 class CircularSleepDial extends StatefulWidget {
   const CircularSleepDial({super.key, required this.accent, required this.initialMinutes});
@@ -341,6 +293,7 @@ class CircularSleepDial extends StatefulWidget {
   final int initialMinutes;
   @override
   State<CircularSleepDial> createState() => _CircularSleepDialState();
+}
 
 class _CircularSleepDialState extends State<CircularSleepDial> {
   late int _mins = widget.initialMinutes.clamp(1, 45);
@@ -353,51 +306,27 @@ class _CircularSleepDialState extends State<CircularSleepDial> {
   @override
   Widget build(BuildContext context) {
     final c = widget.accent == Colors.black ? Colors.white : widget.accent;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        GestureDetector(
-          onPanDown: (d) => _updateFromOffset(d.localPosition, const Size(190, 190)),
-          onPanUpdate: (d) => _updateFromOffset(d.localPosition, const Size(190, 190)),
-          child: SizedBox(
-            width: 190,
-            height: 190,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                SizedBox(
-                  width: 165,
-                  height: 165,
-                  child: CircularProgressIndicator(value: _mins / 45.0, strokeWidth: 12, backgroundColor: Colors.white12, valueColor: AlwaysStoppedAnimation<Color>(c)),
-                ),
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('${_mins}m', style: TextStyle(fontSize: 34, fontWeight: FontWeight.w900, color: c)),
-                    const Text('15s Fade-Out', style: TextStyle(fontSize: 11, color: Colors.white54)),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            TextButton(onPressed: () => Navigator.pop(context, 0), child: const Text('Turn Off')),
-            FilledButton(style: FilledButton.styleFrom(backgroundColor: c, foregroundColor: Colors.black), onPressed: () => Navigator.pop(context, _mins), child: Text('Set ${_mins}m')),
-          ],
-        ),
-      ],
-    );
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      GestureDetector(
+        onPanDown: (d) => _updateFromOffset(d.localPosition, const Size(190, 190)),
+        onPanUpdate: (d) => _updateFromOffset(d.localPosition, const Size(190, 190)),
+        child: SizedBox(width: 190, height: 190, child: Stack(alignment: Alignment.center, children: [
+          SizedBox(width: 165, height: 165, child: CircularProgressIndicator(value: _mins / 45.0, strokeWidth: 12, backgroundColor: Colors.white12, valueColor: AlwaysStoppedAnimation<Color>(c))),
+          Column(mainAxisSize: MainAxisSize.min, children: [Text('${_mins}m', style: TextStyle(fontSize: 34, fontWeight: FontWeight.w900, color: c)), const Text('15s Fade-Out', style: TextStyle(fontSize: 11, color: Colors.white54))]),
+        ])),
+      ),
+      const SizedBox(height: 12),
+      Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [TextButton(onPressed: () => Navigator.pop(context, 0), child: const Text('Turn Off')), FilledButton(style: FilledButton.styleFrom(backgroundColor: c, foregroundColor: Colors.black), onPressed: () => Navigator.pop(context, _mins), child: Text('Set ${_mins}m'))]),
+    ]);
   }
+}
 
 class TypeShiApp extends StatefulWidget {
   const TypeShiApp({super.key});
   @override
   State<TypeShiApp> createState() => _TypeShiAppState();
 
+}
 class _TypeShiAppState extends State<TypeShiApp> {
   int _accentIndex = 0;
   Color? _customAccent;
@@ -428,21 +357,14 @@ class _TypeShiAppState extends State<TypeShiApp> {
   }
 
   Future<void> _setAccent(int idx) async {
-    setState(() {
-      _accentIndex = idx;
-      _customAccent = null;
-      _dynamicAccent = null;
-    });
+    setState(() { _accentIndex = idx; _customAccent = null; _dynamicAccent = null; });
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('accentIndex', idx);
     await prefs.remove('customAccentVal');
   }
 
   Future<void> _setCustomColor(Color c) async {
-    setState(() {
-      _customAccent = c;
-      _dynamicAccent = null;
-    });
+    setState(() { _customAccent = c; _dynamicAccent = null; });
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('customAccentVal', c.toARGB32());
   }
@@ -491,6 +413,7 @@ class _TypeShiAppState extends State<TypeShiApp> {
       ),
     );
   }
+}
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
@@ -523,6 +446,7 @@ class HomeScreen extends StatefulWidget {
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 
+}
 class _HomeScreenState extends State<HomeScreen> {
   static const EventChannel _noisyChannel = EventChannel('typeshi/noisy');
   static const EventChannel _sensorChannel = EventChannel('typeshi/sensors');
@@ -1398,6 +1322,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     ]);
   }
+}
 
 class NowPlayingSheet extends StatefulWidget {
   const NowPlayingSheet({
@@ -1441,6 +1366,7 @@ class NowPlayingSheet extends StatefulWidget {
   @override
   State<NowPlayingSheet> createState() => _NowPlayingSheetState();
 
+}
 class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderStateMixin {
   List<LyricLine> _lyrics = [];
   String _plainLyrics = '';
@@ -1714,3 +1640,14 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderSt
 
 
 
+
+
+
+
+
+
+
+
+
+
+}
