@@ -645,7 +645,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _player.durationStream.listen((d) { if (!mounted || d == null) return; setState(() => _dur = d); if (_current != null && _current!.durationMs == 0 && d.inMilliseconds > 0) { final u = _current!.copyWith(durationMs: d.inMilliseconds); _queue[_index] = u; final i = _songs.indexWhere((e) => e.id == u.id); if (i >= 0) _songs[i] = u; _saveData(); } });
     _player.playerStateStream.listen((st) { if (!mounted) return; setState(() => _playing = st.playing); if (st.playing && _ambientOverlay != 'Off') { _ambientPlayer.play(); } else if (!st.playing) { _ambientPlayer.pause(); } if (st.processingState == ProcessingState.completed && _loop != LoopMode.one && !_crossfading) _next(); });
     final prefs = await SharedPreferences.getInstance();
-    final rawSongs = prefs.getString('songs'); if (rawSongs != null && rawSongs.isNotEmpty) _songs.addAll((jsonDecode(rawSongs) as List).map((e) => Song.fromJson(Map<String, dynamic>.from(e))).where((s) => File(s.path).existsSync()));
+    final rawSongs = prefs.getString('songs'); if (rawSongs != null && rawSongs.isNotEmpty) _songs.addAll((jsonDecode(rawSongs) as List).map((e) => Song.fromJson(Map<String, dynamic>.from(e))));
     final rawPl = prefs.getString('playlists'); if (rawPl != null && rawPl.isNotEmpty) _playlists.addAll((jsonDecode(rawPl) as List).map((e) => Playlist.fromJson(Map<String, dynamic>.from(e))));
     final bg = prefs.getString('bgPath'); if (bg != null && File(bg).existsSync()) _bgPath = bg;
     final savedBanner = prefs.getString('bannerTitle'); if (savedBanner != null && savedBanner.isNotEmpty) _bannerTitle = savedBanner;
@@ -1736,6 +1736,7 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderSt
     );
   }
 }
+
 
 
 
