@@ -665,6 +665,7 @@ class _HomeScreenState extends State<HomeScreen> {
           await _loadMiniLyrics(_songs[f]);
           await _ensureBgAudio();
           await _ensureBgAudio();
+          await _ensureBgAudio();
           final curSong = _songs[f];
           await _player.setAudioSource(AudioSource.file(curSong.path, tag: MediaItem(id: curSong.id, title: curSong.title, artist: curSong.artist, album: curSong.album.isEmpty ? 'Type Shi' : curSong.album, artUri: curSong.artPath != null ? Uri.file(curSong.artPath!) : null)));
           if (lastPosMs > 0) await _player.seek(Duration(milliseconds: lastPosMs));
@@ -979,6 +980,7 @@ class _HomeScreenState extends State<HomeScreen> {
     await _extractCoverColor(bumped);
     await _loadMiniLyrics(bumped);
     await _player.setVolume(_volumeNormalizer ? 0.85 : 1.0);
+    await _ensureBgAudio();
     await _ensureBgAudio();
     await _ensureBgAudio();
     final curSong = _queue[_index];
@@ -1734,6 +1736,7 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderSt
     );
   }
 }
+
 
 
 
