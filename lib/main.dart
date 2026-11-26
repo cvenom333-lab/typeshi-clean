@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -11,11 +11,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
+import 'package:just_audio_background/just_audio_background.dart';
+import 'package:just_audio_background/just_audio_background.dart';
+import 'package:just_audio_background/just_audio_background.dart';
+import 'package:just_audio_background/just_audio_background.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await JustAudioBackground.init(androidNotificationChannelId: 'com.typeshi.channel.audio', androidNotificationChannelName: 'Type Shi Playback', androidNotificationOngoing: true);
+  await JustAudioBackground.init(androidNotificationChannelId: 'com.typeshi.channel.audio', androidNotificationChannelName: 'Type Shi Playback', androidNotificationOngoing: true);
+  await JustAudioBackground.init(androidNotificationChannelId: 'com.typeshi.channel.audio', androidNotificationChannelName: 'Type Shi Playback', androidNotificationOngoing: true);
+  await JustAudioBackground.init(androidNotificationChannelId: 'com.typeshi.channel.audio', androidNotificationChannelName: 'Type Shi Playback', androidNotificationOngoing: true);
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     systemNavigationBarColor: Colors.black,
@@ -951,7 +959,8 @@ class _HomeScreenState extends State<HomeScreen> {
     await _extractCoverColor(bumped);
     await _loadMiniLyrics(bumped);
     await _player.setVolume(_volumeNormalizer ? 0.85 : 1.0);
-    await _player.setFilePath(_queue[_index].path);
+    final curSong = _queue[_index];
+    await _player.setAudioSource(AudioSource.file(curSong.path, tag: MediaItem(id: curSong.id, title: curSong.title, artist: curSong.artist, album: curSong.album.isEmpty ? 'Type Shi' : curSong.album, artUri: curSong.artPath != null ? Uri.file(curSong.artPath!) : null)));
     await _player.setSpeed(_slowedReverb ? 0.85 : (_lofiMode ? 0.92 : _speed));
     await _player.setPitch(_slowedReverb ? 0.88 : (_lofiMode ? 0.94 : _pitch));
     await _player.play();
@@ -1703,4 +1712,8 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderSt
     );
   }
 }
+
+
+
+
 
