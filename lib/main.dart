@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -26,6 +26,7 @@ Future<void> _ensureBgAudio() async {
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  await JustAudioBackground.init(androidNotificationChannelId: 'com.typeshi.channel.audio', androidNotificationChannelName: 'Type Shi Playback', androidNotificationOngoing: true);
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     systemNavigationBarColor: Colors.black,
@@ -614,6 +615,7 @@ class _HomeScreenState extends State<HomeScreen> {
   StreamSubscription? _sensorSub;
   int? _sleepMinutes;
   bool _crossfading = false;
+  bool _handlingComplete = false;
   List<LyricLine> _miniLyrics = [];
   String? _miniLyricsSongId;
 
@@ -643,7 +645,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _statTimer = Timer.periodic(const Duration(seconds: 5), (_) { _checkBattery(); if (_playing) { _totalSecondsListened += 5; SharedPreferences.getInstance().then((p) { p.setInt('totalSec', _totalSecondsListened); if (_current != null) { p.setString('lastSongId', _current!.id); p.setInt('lastPosMs', _pos.inMilliseconds); } }); } });
     _player.positionStream.listen((p) { if (!mounted) return; setState(() => _pos = p); if (_loopA != null && _loopB != null && _loopB! > _loopA! && p >= _loopB!) _player.seek(_loopA!); if (_crossfadeSec > 0 && !_crossfading && _dur.inSeconds > _crossfadeSec + 2 && (_dur - p).inMilliseconds <= _crossfadeSec * 1000 && (_dur - p).inMilliseconds > 200) _triggerCrossfade(); });
     _player.durationStream.listen((d) { if (!mounted || d == null) return; setState(() => _dur = d); if (_current != null && _current!.durationMs == 0 && d.inMilliseconds > 0) { final u = _current!.copyWith(durationMs: d.inMilliseconds); _queue[_index] = u; final i = _songs.indexWhere((e) => e.id == u.id); if (i >= 0) _songs[i] = u; _saveData(); } });
-    _player.playerStateStream.listen((st) { if (!mounted) return; setState(() => _playing = st.playing); if (st.playing && _ambientOverlay != 'Off') { _ambientPlayer.play(); } else if (!st.playing) { _ambientPlayer.pause(); } if (st.processingState == ProcessingState.completed && _loop != LoopMode.one && !_crossfading) _next(); });
+    _player.playerStateStream.listen((st) { if (!mounted) return; setState(() => _playing = st.playing); if (st.playing && _ambientOverlay != 'Off') { _ambientPlayer.play(); } else if (!st.playing) { _ambientPlayer.pause(); } if (st.processingState == ProcessingState.completed && _loop != LoopMode.one && !_crossfading && !_handlingComplete) { _handlingComplete = true; _next().whenComplete(() => _handlingComplete = false); } });
     final prefs = await SharedPreferences.getInstance();
     final rawSongs = prefs.getString('songs'); if (rawSongs != null && rawSongs.isNotEmpty) _songs.addAll((jsonDecode(rawSongs) as List).map((e) => Song.fromJson(Map<String, dynamic>.from(e))));
     final rawPl = prefs.getString('playlists'); if (rawPl != null && rawPl.isNotEmpty) _playlists.addAll((jsonDecode(rawPl) as List).map((e) => Playlist.fromJson(Map<String, dynamic>.from(e))));
@@ -663,10 +665,7 @@ class _HomeScreenState extends State<HomeScreen> {
         Future.microtask(() async {
           await _extractCoverColor(_songs[f]);
           await _loadMiniLyrics(_songs[f]);
-          await _ensureBgAudio();
-          await _ensureBgAudio();
-          await _ensureBgAudio();
-          final curSong = _songs[f];
+                            final curSong = _songs[f];
           await _player.setAudioSource(AudioSource.file(curSong.path, tag: MediaItem(id: curSong.id, title: curSong.title, artist: curSong.artist, album: curSong.album.isEmpty ? 'Type Shi' : curSong.album, artUri: curSong.artPath != null ? Uri.file(curSong.artPath!) : null)));
           if (lastPosMs > 0) await _player.seek(Duration(milliseconds: lastPosMs));
         });
@@ -980,9 +979,6 @@ class _HomeScreenState extends State<HomeScreen> {
     await _extractCoverColor(bumped);
     await _loadMiniLyrics(bumped);
     await _player.setVolume(_volumeNormalizer ? 0.85 : 1.0);
-    await _ensureBgAudio();
-    await _ensureBgAudio();
-    await _ensureBgAudio();
     final curSong = _queue[_index];
     await _player.setAudioSource(AudioSource.file(curSong.path, tag: MediaItem(id: curSong.id, title: curSong.title, artist: curSong.artist, album: curSong.album.isEmpty ? 'Type Shi' : curSong.album, artUri: curSong.artPath != null ? Uri.file(curSong.artPath!) : null)));
     await _player.setSpeed(_slowedReverb ? 0.85 : (_lofiMode ? 0.92 : _speed));
@@ -1736,6 +1732,8 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderSt
     );
   }
 }
+
+
 
 
 
