@@ -651,7 +651,23 @@ class _HomeScreenState extends State<HomeScreen> {
     final rawGains = prefs.getString('eqGains'); if (rawGains != null) _eqGains = (jsonDecode(rawGains) as List).map((e) => (e as num).toDouble()).toList();
     await _applyEq();
     final lastId = prefs.getString('lastSongId'); final lastPosMs = prefs.getInt('lastPosMs') ?? 0;
-    if (lastId != null && _songs.isNotEmpty) { final f = _songs.indexWhere((s) => s.id == lastId); if (f >= 0) { _queue = List<Song>.from(_songs); _index = f; _pos = Duration(milliseconds: lastPosMs); await _extractCoverColor(_songs[f]); await _loadMiniLyrics(_songs[f]); await _player.setFilePath(_songs[f].path); if (lastPosMs > 0) await _player.seek(Duration(milliseconds: lastPosMs)); } }
+    if (lastId != null && _songs.isNotEmpty) {
+      final f = _songs.indexWhere((s) => s.id == lastId);
+      if (f >= 0) {
+        _queue = List<Song>.from(_songs);
+        _index = f;
+        _pos = Duration(milliseconds: lastPosMs);
+        if (mounted) setState(() {});
+        Future.microtask(() async {
+          await _extractCoverColor(_songs[f]);
+          await _loadMiniLyrics(_songs[f]);
+          final curSong = _songs[f];
+          await _player.setAudioSource(AudioSource.file(curSong.path, tag: MediaItem(id: curSong.id, title: curSong.title, artist: curSong.artist, album: curSong.album.isEmpty ? 'Type Shi' : curSong.album, artUri: curSong.artPath != null ? Uri.file(curSong.artPath!) : null)));
+          if (lastPosMs > 0) await _player.seek(Duration(milliseconds: lastPosMs));
+        });
+        return;
+      }
+    }
     if (mounted) setState(() {});
   }
 
@@ -1712,6 +1728,8 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderSt
     );
   }
 }
+
+
 
 
 
