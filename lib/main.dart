@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -18,12 +18,14 @@ import 'package:just_audio_background/just_audio_background.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-Future<void> main() async {
+bool _bgAudioReady = false;
+Future<void> _ensureBgAudio() async {
+  if (_bgAudioReady) return;
+  _bgAudioReady = true;
+}
+
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  await JustAudioBackground.init(androidNotificationChannelId: 'com.typeshi.channel.audio', androidNotificationChannelName: 'Type Shi Playback', androidNotificationOngoing: true);
-  await JustAudioBackground.init(androidNotificationChannelId: 'com.typeshi.channel.audio', androidNotificationChannelName: 'Type Shi Playback', androidNotificationOngoing: true);
-  await JustAudioBackground.init(androidNotificationChannelId: 'com.typeshi.channel.audio', androidNotificationChannelName: 'Type Shi Playback', androidNotificationOngoing: true);
-  await JustAudioBackground.init(androidNotificationChannelId: 'com.typeshi.channel.audio', androidNotificationChannelName: 'Type Shi Playback', androidNotificationOngoing: true);
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     systemNavigationBarColor: Colors.black,
@@ -661,6 +663,8 @@ class _HomeScreenState extends State<HomeScreen> {
         Future.microtask(() async {
           await _extractCoverColor(_songs[f]);
           await _loadMiniLyrics(_songs[f]);
+          await _ensureBgAudio();
+          await _ensureBgAudio();
           final curSong = _songs[f];
           await _player.setAudioSource(AudioSource.file(curSong.path, tag: MediaItem(id: curSong.id, title: curSong.title, artist: curSong.artist, album: curSong.album.isEmpty ? 'Type Shi' : curSong.album, artUri: curSong.artPath != null ? Uri.file(curSong.artPath!) : null)));
           if (lastPosMs > 0) await _player.seek(Duration(milliseconds: lastPosMs));
@@ -975,6 +979,8 @@ class _HomeScreenState extends State<HomeScreen> {
     await _extractCoverColor(bumped);
     await _loadMiniLyrics(bumped);
     await _player.setVolume(_volumeNormalizer ? 0.85 : 1.0);
+    await _ensureBgAudio();
+    await _ensureBgAudio();
     final curSong = _queue[_index];
     await _player.setAudioSource(AudioSource.file(curSong.path, tag: MediaItem(id: curSong.id, title: curSong.title, artist: curSong.artist, album: curSong.album.isEmpty ? 'Type Shi' : curSong.album, artUri: curSong.artPath != null ? Uri.file(curSong.artPath!) : null)));
     await _player.setSpeed(_slowedReverb ? 0.85 : (_lofiMode ? 0.92 : _speed));
@@ -1728,6 +1734,8 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderSt
     );
   }
 }
+
+
 
 
 
