@@ -12,19 +12,11 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_background/just_audio_background.dart';
-import 'package:just_audio_background/just_audio_background.dart';
-import 'package:just_audio_background/just_audio_background.dart';
-import 'package:just_audio_background/just_audio_background.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-bool _bgAudioReady = false;
-Future<void> _ensureBgAudio() async {
-  if (_bgAudioReady) return;
-  _bgAudioReady = true;
-}
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await JustAudioBackground.init(androidNotificationChannelId: 'com.typeshi.channel.audio', androidNotificationChannelName: 'Type Shi Playback', androidNotificationOngoing: true);
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
@@ -32,7 +24,6 @@ void main() {
     systemNavigationBarColor: Colors.black,
   ));
   runApp(const TypeShiApp());
-}
 
 const List<Color> kAccentPalette = [
   Color(0xFFFFFFFF),
@@ -72,7 +63,6 @@ class VibePack {
   final bool amoled;
   final bool frosted;
   final int glowLevel;
-}
 
 const List<VibePack> kVibePacks = [
   VibePack('Midnight Crimson', 'Pure black + Neon Red', Color(0xFFFF2E55), 0, true, false, 2),
@@ -121,7 +111,6 @@ class Song {
 
   Map<String, dynamic> toJson() => {'id': id, 'title': title, 'artist': artist, 'album': album, 'path': path, 'artPath': artPath, 'favorite': favorite, 'playCount': playCount, 'durationMs': durationMs, 'mood': mood};
   factory Song.fromJson(Map<String, dynamic> j) => Song(id: j['id'] ?? '', title: j['title'] ?? 'Unknown', artist: j['artist'] ?? 'Unknown Artist', album: j['album'] ?? '', path: j['path'] ?? '', artPath: j['artPath'], favorite: j['favorite'] ?? false, playCount: j['playCount'] ?? 0, durationMs: j['durationMs'] ?? 0, mood: j['mood'] ?? '');
-}
 
 class Playlist {
   Playlist({required this.id, required this.name, required this.songIds});
@@ -130,13 +119,11 @@ class Playlist {
   final List<String> songIds;
   Map<String, dynamic> toJson() => {'id': id, 'name': name, 'songIds': songIds};
   factory Playlist.fromJson(Map<String, dynamic> j) => Playlist(id: j['id'] ?? '', name: j['name'] ?? 'Playlist', songIds: List<String>.from(j['songIds'] ?? const []));
-}
 
 class LyricLine {
   const LyricLine(this.at, this.text);
   final Duration at;
   final String text;
-}
 
 class MarqueeText extends StatefulWidget {
   const MarqueeText(this.text, {super.key, required this.style});
@@ -144,7 +131,6 @@ class MarqueeText extends StatefulWidget {
   final TextStyle style;
   @override
   State<MarqueeText> createState() => _MarqueeTextState();
-}
 
 class _MarqueeTextState extends State<MarqueeText> {
   final ScrollController _sc = ScrollController();
@@ -179,7 +165,6 @@ class _MarqueeTextState extends State<MarqueeText> {
       child: Text('${widget.text}     ', style: widget.style),
     );
   }
-}
 
 class ProceduralNeonCover extends StatelessWidget {
   const ProceduralNeonCover({super.key, required this.seedText, required this.accent, required this.size, this.radius = 12});
@@ -216,7 +201,6 @@ class ProceduralNeonCover extends StatelessWidget {
       ),
     );
   }
-}
 
 class AnimatedEqualizer extends StatefulWidget {
   const AnimatedEqualizer({super.key, required this.color, required this.playing, this.size = 20});
@@ -225,7 +209,6 @@ class AnimatedEqualizer extends StatefulWidget {
   final double size;
   @override
   State<AnimatedEqualizer> createState() => _AnimatedEqualizerState();
-}
 
 class _AnimatedEqualizerState extends State<AnimatedEqualizer> with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 650))..repeat(reverse: true);
@@ -254,7 +237,6 @@ class _AnimatedEqualizerState extends State<AnimatedEqualizer> with SingleTicker
       },
     );
   }
-}
 
 class AmbientParticleOverlay extends StatefulWidget {
   const AmbientParticleOverlay({super.key, required this.mode, required this.accent});
@@ -262,7 +244,6 @@ class AmbientParticleOverlay extends StatefulWidget {
   final Color accent;
   @override
   State<AmbientParticleOverlay> createState() => _AmbientParticleOverlayState();
-}
 
 class _AmbientParticleOverlayState extends State<AmbientParticleOverlay> with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 10))..repeat();
@@ -286,7 +267,6 @@ class _AmbientParticleOverlayState extends State<AmbientParticleOverlay> with Si
       ),
     );
   }
-}
 
 class _ParticlePainter extends CustomPainter {
   _ParticlePainter(this.seeds, this.t, this.mode, this.accent);
@@ -316,7 +296,6 @@ class _ParticlePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _ParticlePainter old) => true;
-}
 
 class MatrixVisualizerBar extends StatefulWidget {
   const MatrixVisualizerBar({super.key, required this.accent, required this.playing});
@@ -324,7 +303,6 @@ class MatrixVisualizerBar extends StatefulWidget {
   final bool playing;
   @override
   State<MatrixVisualizerBar> createState() => _MatrixVisualizerBarState();
-}
 
 class _MatrixVisualizerBarState extends State<MatrixVisualizerBar> {
   final _rng = math.Random();
@@ -356,7 +334,6 @@ class _MatrixVisualizerBarState extends State<MatrixVisualizerBar> {
       child: Text(_cols.join(' '), maxLines: 1, overflow: TextOverflow.clip, style: TextStyle(fontFamily: 'monospace', fontSize: 11, fontWeight: FontWeight.w900, color: c)),
     );
   }
-}
 
 class CircularSleepDial extends StatefulWidget {
   const CircularSleepDial({super.key, required this.accent, required this.initialMinutes});
@@ -364,7 +341,6 @@ class CircularSleepDial extends StatefulWidget {
   final int initialMinutes;
   @override
   State<CircularSleepDial> createState() => _CircularSleepDialState();
-}
 
 class _CircularSleepDialState extends State<CircularSleepDial> {
   late int _mins = widget.initialMinutes.clamp(1, 45);
@@ -416,13 +392,11 @@ class _CircularSleepDialState extends State<CircularSleepDial> {
       ],
     );
   }
-}
 
 class TypeShiApp extends StatefulWidget {
   const TypeShiApp({super.key});
   @override
   State<TypeShiApp> createState() => _TypeShiAppState();
-}
 
 class _TypeShiAppState extends State<TypeShiApp> {
   int _accentIndex = 0;
@@ -517,7 +491,6 @@ class _TypeShiAppState extends State<TypeShiApp> {
       ),
     );
   }
-}
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
@@ -549,7 +522,6 @@ class HomeScreen extends StatefulWidget {
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
-}
 
 class _HomeScreenState extends State<HomeScreen> {
   static const EventChannel _noisyChannel = EventChannel('typeshi/noisy');
@@ -1426,7 +1398,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     ]);
   }
-}
 
 class NowPlayingSheet extends StatefulWidget {
   const NowPlayingSheet({
@@ -1469,7 +1440,6 @@ class NowPlayingSheet extends StatefulWidget {
 
   @override
   State<NowPlayingSheet> createState() => _NowPlayingSheetState();
-}
 
 class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderStateMixin {
   List<LyricLine> _lyrics = [];
@@ -1731,7 +1701,6 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> with TickerProviderSt
       ]),
     );
   }
-}
 
 
 
